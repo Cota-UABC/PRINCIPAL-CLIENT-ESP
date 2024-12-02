@@ -2,6 +2,8 @@
 
 static const char *TAG_G = "GPIO";
 
+SemaphoreHandle_t edge_mutex = 0;
+
 volatile uint8_t l_state = 0, b_state = 0, b_state_old = 0, edge = 0;
 
 void init_gpio(void)
@@ -31,29 +33,37 @@ void set_led(uint8_t state)
     }
 }
 
-/*
-void get_button(void)
-{
-    b_state = gpio_get_level(BUTTON);
-}
-*/
 
 void get_button_task(void *pvParameters)
 {
+    ESP_LOGI(TAG_G, "Starting get button task...");
+    edge_mutex = xSemaphoreCreateMutex();
+
     while(1)
     {
         b_state = gpio_get_level(BUTTON);
         if( b_state_old == 0 && b_state == 1)
         {
-            edge = 1;
-            vTaskDelay(pdMS_TO_TICKS(20)); //delay antirrebote
+            if(xSemaphoreTake(edge_mutex, portMAX_DELAY))
+            {
+                edge = 1;
+                xSemaphoreGive(edge_mutex);
+            }
             ESP_LOGI(TAG_G, "Button pressed");
+            vTaskDelay(pdMS_TO_TICKS(20)); //delay antirrebote
         }
-        else if( b_state_old == 1 && b_state == 0)
-            edge = 0;
+        else if( b_state_old == 1 && b_state == 0){
+            if(xSemaphoreTake(edge_mutex, portMAX_DELAY))
+            {
+                edge = 0;
+                xSemaphoreGive(edge_mutex);
+            }
+        }
 
         b_state_old = b_state;
 
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+
+    vSemaphoreDelete(edge_mutex);
 }

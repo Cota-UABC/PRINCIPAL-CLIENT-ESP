@@ -1,6 +1,6 @@
 #include "nvs_esp.h"
 
-const char *TAG_NVS = "NVS", *key_ssid = "SSID", *key_pass = "PASS", *key_dev_name = "DEV", *key_user = "USER", *key_dev_num = "DEV_NUM";
+char *TAG_NVS = "NVS", *key_ssid = "SSID", *key_pass = "PASS", *key_dev_name = "DEV", *key_user = "USER", *key_dev_num = "DEV_NUM";
 
 nvs_handle_t esp_nvs_handle;
 

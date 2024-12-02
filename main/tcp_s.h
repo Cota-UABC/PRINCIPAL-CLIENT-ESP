@@ -9,7 +9,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/timers.h"
-#include "freertos/event_groups.h"
+#include "freertos/semphr.h"
+//#include "freertos/event_groups.h"
 #include "freertos/queue.h"
 
 #include "lwip/inet.h"
@@ -59,7 +60,7 @@
 #define HOST_LOCAL "192.168.100.14" //esp server
 
 #define PORT_TIME 80
-#define HOST_TIME "2a09:8280:1::3:e"
+#define HOST_TIME "213.188.196.246" //worldtime api 
 
 //#define SEND_MESSAGE "UABC:BCR:X:X:test"
 #define SEND_MESSAGE "UABC:BCR:M:S:6644871544:Hola_desde_esp"
@@ -75,6 +76,8 @@
 #define VALUE_T 5
 #define COMMENT_T 6
 
+#define TIME_STRING_LEN 16
+
 extern int sock;
 
 extern TimerHandle_t timer1;
@@ -87,14 +90,28 @@ extern char user_tcp[STR_LEN];
 
 extern char rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN];
 
+//---BUTTON---
 extern uint8_t send_f;
 extern uint64_t button_press_time, current_time, diff_time;
 
 extern volatile uint8_t send_ack_f;
 
+//---CLOCK---
+//#define PRINT_TIME
+#define CHECK_TIME_OFFSET
+#define CLOCK_MIN_TO_CHECK 1
+
+extern volatile uint16_t hours_true, minutes_true, seconds_true, hours, minutes, seconds;
+
+extern SemaphoreHandle_t real_time_key;
+
+//---ACKNOWLEGE---
 #define MAX_NO_ACK 3
 
 extern uint16_t counter, counter_no_ack;
+
+
+void clock_task(void *pvParameters);
 
 void vTimerCallback(TimerHandle_t pxTimer);
 
@@ -108,7 +125,7 @@ void tcp_time_task(void *pvParameters);
 
 void connect_to_host_time(char *host_parameter, int port);
 
-void button_task(void *pvParameters);
+void button_event_task(void *pvParameters);
 
 void handleRead_tcp(char command[][128], char *tx_buffer);
 

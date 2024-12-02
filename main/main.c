@@ -39,7 +39,7 @@ typedef struct
     char *str3;
 } task_params_t;
 
-int validate_red_nvs_values(char *ssid, char *pass, char *dev_name, char *user, char *dev_num);
+int validate_read_nvs_values(char *ssid, char *pass, char *dev_name, char *user, char *dev_num);
 
 void activate_access_point()
 {
@@ -55,8 +55,11 @@ void app_main(void)
     ledc_init();
     ESP_ERROR_CHECK(init_nvs());
 
+    //button task
+    xTaskCreate(get_button_task, "get_button_task", 4096, NULL, 4, NULL);
+
     //validate flash values
-    valid_f = validate_red_nvs_values(ssid, pass, dev_name, user, dev_num);
+    valid_f = validate_read_nvs_values(ssid, pass, dev_name, user, dev_num);
 
     if(!valid_f)
         activate_access_point();
@@ -71,27 +74,26 @@ void app_main(void)
             vTaskDelay(pdMS_TO_TICKS(50));
     }
 
+    //if got IP
     if(ip_flag)
     {
+        //tcp clock task
+        xTaskCreate(clock_task, "clock_task", 4096, NULL, 5, NULL);
+
         task_params_t params = {
             .str1 = user,
             .str2 = dev_num,
             .str3 = "\0",
         };
+        //tcp iot server
+        //xTaskCreate(tcp_server_task, "tcp_server_task", 4096, &params, 5, &tcp_server_handle);
 
-        //tcp_time_task
-        //xTaskCreate(tcp_time_task, "tcp_time_task", 4096, NULL, 5, NULL);
-
-        xTaskCreate(tcp_server_task, "tcp_server_task", 4096, &params, 5, &tcp_server_handle);
         //mqtt_app_start();
     }
     else    
         xTaskCreate(udp_server_task, "udp_server_task", 4096, (void *)AF_INET, 5, &udp_server_handle);
 
-
-    xTaskCreate(get_button_task, "get_button_task", 4096, NULL, 5, &get_button_handle);
-
-    
+    xTaskCreate(button_event_task, "button_event_task", 4096, NULL, 4, NULL);
 
     //set led and read adc
     while(1)
@@ -99,7 +101,6 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(50));
         set_led(l_state);
         read_adc_input(CHANNEL_0);
-        //ESP_LOGI(TAG_MAIN, "ADC: %d", adc_value);
 
         //TODO: wifi led
 
@@ -109,7 +110,7 @@ void app_main(void)
     }
 }
 
-int validate_red_nvs_values(char *ssid, char *pass, char *dev_name, char *user, char *dev_num)
+int validate_read_nvs_values(char *ssid, char *pass, char *dev_name, char *user, char *dev_num)
 {
     uint8_t valid_f = 0;
 

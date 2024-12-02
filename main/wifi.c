@@ -16,8 +16,11 @@ uint8_t ip_flag;
 #define SSID "Totalplay-2.4G-b518"
 #define PASS "Qxm2EAzh99Ce7Lfk"
 
-//#define SSID "cota_mobil"
-//#define PASS "fruit123"
+//#define SSID "Totalplay-CF3C"
+//#define PASS "C8D6CF3C"
+
+//#define SSID "LuisEnrique"
+//#define PASS "luis12345"
 
 //#define SSID "IoT_AP"
 //#define PASS "12345678"
