@@ -22,7 +22,7 @@ volatile uint8_t send_ack_f = 0;
 //time variables
 volatile uint16_t hours_true=0, minutes_true=0, seconds_true=0xffff, hours=0, minutes=0, seconds=0;
 
-SemaphoreHandle_t real_time_key = 0;
+SemaphoreHandle_t real_time_key = 0, check_time_key = 0;
 
 char host[30], rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN], 
     pasword_iot[50], pasword_iot_desif[50], login[STR_LEN], keep_alive[STR_LEN], time_api_message[STR_LEN], rx_buffer_time[1024];
@@ -42,6 +42,10 @@ void clock_task(void *pvParameters)
 
     xTaskCreate(tcp_time_task, "tcp_time_task", 4096, NULL, 5, NULL);
     xSemaphoreGive(real_time_key);
+
+    #ifdef CHECK_TIME_OFFSET
+    xTaskCreate(check_time_offset_task, "check_time_offset_task", 4096, NULL, 5, NULL);
+    #endif
 
     //wait to get real time
     while(seconds_true>60)
@@ -80,21 +84,40 @@ void clock_task(void *pvParameters)
         //check offset every certain minutes
         #ifdef CHECK_TIME_OFFSET
         if(!(internal_timer % (60*CLOCK_MIN_TO_CHECK)))
-            xSemaphoreGive(real_time_key);
-
-        if(seconds_true<=60)
         {
+            xSemaphoreGive(real_time_key);
+            xSemaphoreGive(check_time_key);
+        }
+
+        #endif
+    }
+    vSemaphoreDelete(real_time_key);
+    ESP_LOGW(TAG_T, "Clock task closed.");
+    vTaskDelete(NULL);
+}
+
+void check_time_offset_task(void *pvParameters)
+{
+    ESP_LOGI(TAG_T, "Starting time offset task...");
+    check_time_key = xSemaphoreCreateBinary();
+
+    while(1)
+    {
+        if(xSemaphoreTake(check_time_key, portMAX_DELAY))
+        {
+            ESP_LOGW(TAG_T, "Waiting to get real time...");
+            while(seconds_true>60)
+                vTaskDelay(pdMS_TO_TICKS(30));
+            
             int dif_h = hours - hours_true;
             int dif_m = minutes - minutes_true;
             int dif_s = seconds - seconds_true;
             ESP_LOGW(TAG_T, "Offset by %d:%d:%d", dif_h,dif_m,dif_s);
             seconds_true = 0xffff;
         }
-        #endif
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
-    vSemaphoreDelete(real_time_key);
-    ESP_LOGW(TAG_T, "Clock task closed.");
-    vTaskDelete(NULL);
+    vSemaphoreDelete(check_time_key);
 }
 
 void vTimerCallback(TimerHandle_t pxTimer)

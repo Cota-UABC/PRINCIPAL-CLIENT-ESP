@@ -103,7 +103,7 @@ extern volatile uint8_t send_ack_f;
 
 extern volatile uint16_t hours_true, minutes_true, seconds_true, hours, minutes, seconds;
 
-extern SemaphoreHandle_t real_time_key;
+extern SemaphoreHandle_t real_time_key, check_time_key;
 
 //---ACKNOWLEGE---
 #define MAX_NO_ACK 3
@@ -112,6 +112,8 @@ extern uint16_t counter, counter_no_ack;
 
 
 void clock_task(void *pvParameters);
+
+void check_time_offset_task(void *pvParameters);
 
 void vTimerCallback(TimerHandle_t pxTimer);
 
