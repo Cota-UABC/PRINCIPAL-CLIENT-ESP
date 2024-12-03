@@ -246,7 +246,7 @@ void tcp_server_task(void *pvParameters)
             break;
 
         ESP_LOGW(TAG_T, "Retrying conexion to IOT server...");
-        vTaskDelay(pdMS_TO_TICKS(500));
+        vTaskDelay(pdMS_TO_TICKS(4000));
     }
 
     ESP_LOGW(TAG_T, "Conecting to local tcp server...");
@@ -355,6 +355,8 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
         setTimer();
         //xTaskCreate(button_event_task, "button_event_task", 4096, NULL, 4, &button_handle);
 
+        counter_no_ack = 0;
+
         // Capturar comandos  
         while(1) 
         {
@@ -453,7 +455,7 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
                 counter_no_ack++;
                 send_ack_f=0;
             }
-            //vTaskDelay(pdMS_TO_TICKS(50));
+            vTaskDelay(pdMS_TO_TICKS(50));
         }
     
         ESP_LOGE(TAG_T, "Stoping timer...");
