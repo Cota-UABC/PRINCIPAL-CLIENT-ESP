@@ -22,6 +22,9 @@ uint8_t ip_flag;
 //#define SSID "LuisEnrique"
 //#define PASS "luis12345"
 
+//#define SSID "cota_mobil"
+//#define PASS "fruit123"
+
 //#define SSID "IoT_AP"
 //#define PASS "12345678"
 
@@ -35,7 +38,7 @@ void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_base, in
         break;
     case WIFI_EVENT_STA_CONNECTED:
         ESP_LOGI(TAG_W,"WiFi connected WIFI_EVENT_STA_CONNECTED ...");
-        connected_w++;
+        connected_w=1;
         retry_count = 0;
         break;
     case WIFI_EVENT_STA_DISCONNECTED:
@@ -50,9 +53,8 @@ void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_base, in
             esp_wifi_stop();
             esp_wifi_deinit();
             ESP_LOGE(TAG_W,"WiFi stopped.");
-            connected_w=0;
+            connected_w=0xff;
         }
-        connected_w = 0;
         //ESP_LOGE(TAG_W, "WiFi lost connection WIFI_EVENT_STA_DISCONNECTED");
         break;
     case IP_EVENT_STA_GOT_IP:

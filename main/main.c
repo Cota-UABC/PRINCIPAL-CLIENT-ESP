@@ -71,7 +71,11 @@ void app_main(void)
         ESP_LOGE(TAG_MAIN, "WIFI waiting....");
         
         while(ip_flag == 0)
+        {
             vTaskDelay(pdMS_TO_TICKS(50));
+            if(connected_w==0xff)
+                break;
+        }
     }
 
     //if got IP
@@ -86,7 +90,7 @@ void app_main(void)
             .str3 = "\0",
         };
         //tcp iot server
-        //xTaskCreate(tcp_server_task, "tcp_server_task", 4096, &params, 5, &tcp_server_handle);
+        xTaskCreate(tcp_server_task, "tcp_server_task", 4096, &params, 5, &tcp_server_handle);
 
         //mqtt_app_start();
     }
@@ -101,8 +105,6 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(50));
         set_led(l_state);
         read_adc_input(CHANNEL_0);
-
-        //TODO: wifi led
 
         //if sudden disconect and no ap active
         //if(!connected_w && !active_ap) 

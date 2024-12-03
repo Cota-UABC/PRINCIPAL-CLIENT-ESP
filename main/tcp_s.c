@@ -1,31 +1,34 @@
 #include "tcp_s.h"
 
-int sock, sock2;
+int sock, sock2, sock3;
 
 TimerHandle_t timer1;
 const int timerId = 1;
 
 static const char *TAG_T = "TCP";
+static const char *TAG_T_CLOCK = "TCP_CLOCK";
 
 TaskHandle_t tcp_server_handle = NULL;
 TaskHandle_t button_handle = NULL;
 
 char user_tcp[STR_LEN];
 
+char host[30], rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN], 
+    pasword_iot[50], pasword_iot_desif[50], login[STR_LEN], keep_alive[STR_LEN], time_api_message[STR_LEN];
+
+//---BUTTON---
 uint8_t send_f = 0;
 uint64_t button_press_time=0, current_time, diff_time;
 
-uint16_t counter, counter_no_ack=0;
-
 volatile uint8_t send_ack_f = 0;
 
-//time variables
+//---CLOCK---
 volatile uint16_t hours_true=0, minutes_true=0, seconds_true=0xffff, hours=0, minutes=0, seconds=0;
 
 SemaphoreHandle_t real_time_key = 0, check_time_key = 0;
 
-char host[30], rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN], 
-    pasword_iot[50], pasword_iot_desif[50], login[STR_LEN], keep_alive[STR_LEN], time_api_message[STR_LEN], rx_buffer_time[1024];
+//---ACKNOWLEGE---
+uint16_t counter, counter_no_ack=0;
 
 typedef struct {
     char *str1;
@@ -50,15 +53,26 @@ void clock_task(void *pvParameters)
     //wait to get real time
     while(seconds_true>60)
         vTaskDelay(pdMS_TO_TICKS(100));
-
-    hours = hours_true;
-    minutes = minutes_true;
-    seconds = seconds_true;
+    
+    if(hours_true>24)
+    {
+        ESP_LOGE(TAG_T_CLOCK, "Could not get real time. Set to 00:00:00");
+        hours = 0;
+        minutes = 0;
+        seconds = 0;
+    }
+    else
+    {
+        ESP_LOGI(TAG_T_CLOCK, "Succesfully got real time.");
+        hours = hours_true;
+        minutes = minutes_true;
+        seconds = seconds_true;
+    }
     seconds_true = 0xffff;
 
     uint16_t internal_timer = 0;
 
-    ESP_LOGI(TAG_T, "Starting local clock...");
+    ESP_LOGI(TAG_T_CLOCK, "Starting local clock...");
     while(1)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -78,7 +92,7 @@ void clock_task(void *pvParameters)
             }
         }
         #ifdef PRINT_TIME
-        ESP_LOGI(TAG_T, "ESP local time: %d:%d:%d", hours, minutes, seconds);
+        ESP_LOGI(TAG_T_CLOCK, "ESP local time: %d:%d:%d", hours, minutes, seconds);
         #endif
 
         //check offset every certain minutes
@@ -98,21 +112,25 @@ void clock_task(void *pvParameters)
 
 void check_time_offset_task(void *pvParameters)
 {
-    ESP_LOGI(TAG_T, "Starting time offset task...");
+    ESP_LOGI(TAG_T_CLOCK, "Starting time offset task...");
     check_time_key = xSemaphoreCreateBinary();
 
     while(1)
     {
         if(xSemaphoreTake(check_time_key, portMAX_DELAY))
         {
-            ESP_LOGW(TAG_T, "Waiting to get real time...");
+            ESP_LOGW(TAG_T_CLOCK, "Waiting to get real time...");
             while(seconds_true>60)
                 vTaskDelay(pdMS_TO_TICKS(30));
-            
-            int dif_h = hours - hours_true;
-            int dif_m = minutes - minutes_true;
-            int dif_s = seconds - seconds_true;
-            ESP_LOGW(TAG_T, "Offset by %d:%d:%d", dif_h,dif_m,dif_s);
+            if(hours_true<24)
+            {
+                int dif_h = hours - hours_true;
+                int dif_m = minutes - minutes_true;
+                int dif_s = seconds - seconds_true;
+                ESP_LOGW(TAG_T_CLOCK, "Offset by %d:%d:%d", dif_h,dif_m,dif_s);
+            }
+            else
+                ESP_LOGE(TAG_T_CLOCK, "Could not get real time to check offset.");
             seconds_true = 0xffff;
         }
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -218,17 +236,27 @@ void button_event_task(void *pvParameters) //evento de boton
 void tcp_server_task(void *pvParameters)
 {
     ESP_LOGI(TAG_T, "Starting tcp server task...");
-    ESP_LOGW(TAG_T, "Conecting to iot tcp server...");
-    connect_to_host(pvParameters, HOST_IOT_UABC, PORT_IOT_UABC);
+
+    while(1)
+    {
+        ESP_LOGE(TAG_T, "Conecting to iot tcp server...");
+        connect_to_server(pvParameters, HOST_IOT_UABC, PORT_IOT_UABC);
+
+        if(!check_internet_conexion())
+            break;
+
+        ESP_LOGW(TAG_T, "Retrying conexion to IOT server...");
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
 
     ESP_LOGW(TAG_T, "Conecting to local tcp server...");
-    connect_to_host(pvParameters, HOST_LOCAL, PORT_LOCAL);
+    connect_to_server(pvParameters, HOST_LOCAL, PORT_LOCAL);
     
-    ESP_LOGW(TAG_T, "TCP task closed.");
+    ESP_LOGE(TAG_T, "TCP task closed.");
     vTaskDelete(NULL);
 }
 
-void connect_to_host(void *pvParameters, char *host_parameter, int port)
+void connect_to_server(void *pvParameters, char *host_parameter, int port)
 {
     sprintf(host, host_parameter);
 
@@ -414,7 +442,7 @@ void connect_to_host(void *pvParameters, char *host_parameter, int port)
 
                 //vTaskDelay(pdMS_TO_TICKS(50));
                 #ifdef DECODE_COM
-                                codeMessage(tx_buffer, pasword_iot_desif);
+                    codeMessage(tx_buffer, pasword_iot_desif);
                 #endif
                 send(sock, tx_buffer, strlen(tx_buffer), 0);
                 ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
@@ -444,19 +472,19 @@ void connect_to_host(void *pvParameters, char *host_parameter, int port)
 
 void tcp_time_task(void *pvParameters)
 {
-    ESP_LOGI(TAG_T, "Starting tcp time server task...");
+    ESP_LOGI(TAG_T_CLOCK, "Starting tcp time server task...");
 
     while(1)
     {
         if(xSemaphoreTake(real_time_key, portMAX_DELAY))
         {
-            ESP_LOGI(TAG_T, "Conecting to worldtime api ...");
+            ESP_LOGI(TAG_T_CLOCK, "Conecting to worldtime api ...");
             connect_to_host_time(HOST_TIME, PORT_TIME);
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    ESP_LOGW(TAG_T, "Time task closed.");
+    ESP_LOGE(TAG_T_CLOCK, "Time task closed.");
     vTaskDelete(NULL);
 }
 
@@ -469,12 +497,14 @@ void connect_to_host_time(char *host_parameter, int port)
 
     while(1)
     {
+        char local_buffer[1024];
+        
         sock2 = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
         if (sock2 < 0) {
-            ESP_LOGE(TAG_T, "Unable to create socket: errno %d", errno);
+            ESP_LOGE(TAG_T_CLOCK, "Unable to create socket: errno %d", errno);
             break;
         }
-        ESP_LOGI(TAG_T, "Socket created, connecting to %s:%d", host_parameter, port);
+        ESP_LOGI(TAG_T_CLOCK, "Socket created, connecting to %s:%d", host_parameter, port);
 
         // Set timeout
         struct timeval timeout;
@@ -484,10 +514,12 @@ void connect_to_host_time(char *host_parameter, int port)
 
         int err = connect(sock2, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
         if (err != 0) {
-            ESP_LOGE(TAG_T, "Socket unable to connect: errno %d", errno);
+            ESP_LOGE(TAG_T_CLOCK, "Socket unable to connect: errno %d", errno);
+            hours_true = 0xffff;
+            seconds_true = 0;
             break;
         }
-        ESP_LOGI(TAG_T, "Successfully connected to: %s", host_parameter);
+        ESP_LOGI(TAG_T_CLOCK, "Successfully connected to: %s", host_parameter);
 
         strcpy(time_api_message, "GET /api/timezone/America/Tijuana.txt HTTP/1.1\r\n"
                                 "Host: worldtimeapi.org\r\n"
@@ -496,22 +528,24 @@ void connect_to_host_time(char *host_parameter, int port)
 
         //send hhtp like request
         send(sock2, time_api_message, strlen(time_api_message), 0);  
-        ESP_LOGI(TAG_T, "Message send to %s Send %d bytes", host_parameter, strlen(time_api_message));
+        ESP_LOGI(TAG_T_CLOCK, "Message send to %s Send %d bytes", host_parameter, strlen(time_api_message));
 
         //receive text
-        int len = recv(sock2, rx_buffer_time, sizeof(rx_buffer_time) - 1, 0);
+        int len = recv(sock2, local_buffer, sizeof(local_buffer) - 1, 0);
         if(len < 0) 
         {
-            ESP_LOGE(TAG_T, "Error occurred during receiving: errno %d", errno);
+            ESP_LOGE(TAG_T_CLOCK, "Error occurred during receiving: errno %d", errno);
+            hours_true = 0xffff;
+            seconds_true = 0;
             break;
         }
 
-        rx_buffer_time[len] = '\0'; // terminator
-        ESP_LOGI(TAG_T, "Received %d bytes", len);
-        //ESP_LOGI(TAG_T, "%s", rx_buffer_time);
+        local_buffer[len] = '\0'; // terminator
+        ESP_LOGI(TAG_T_CLOCK, "Received %d bytes", len);
+        //ESP_LOGI(TAG_T_CLOCK, "%s", local_buffer);
 
         //process time on text
-        char *ptr_time_1 = strstr(rx_buffer_time, "datetime");
+        char *ptr_time_1 = strstr(local_buffer, "datetime");
         char time_string[TIME_STRING_LEN] = "\0";
         if(ptr_time_1 != NULL)
         {
@@ -522,12 +556,22 @@ void connect_to_host_time(char *host_parameter, int port)
                 time_string[TIME_STRING_LEN-1] = '\0';
             }
             else
-                ESP_LOGI(TAG_T, "No se encontro segunda instancia de texto");
+            {
+                ESP_LOGI(TAG_T_CLOCK, "No se encontro segunda instancia de texto");
+                hours_true = 0xffff;
+                seconds_true = 0;
+                break;
+            }
         }
         else
-            ESP_LOGI(TAG_T, "No se encontro instancia de texto");
+        {
+            ESP_LOGI(TAG_T_CLOCK, "No se encontro instancia de texto");
+            hours_true = 0xffff;
+            seconds_true = 0;
+            break;
+        }
 
-        //ESP_LOGW(TAG_T, "time: %s", time_string);
+        //ESP_LOGW(TAG_T_CLOCK, "time: %s", time_string);
 
         //seperate time parts HH:MM:SS.SS
         char str[10];
@@ -549,13 +593,74 @@ void connect_to_host_time(char *host_parameter, int port)
             str[2] = '\0';
             seconds_true = atoi(str);
 
-            ESP_LOGI(TAG_T, "Time got: %d:%d:%d", hours_true, minutes_true, seconds_true);
+            ESP_LOGI(TAG_T_CLOCK, "Time got: %d:%d:%d", hours_true, minutes_true, seconds_true);
         }
         break;
     }
-    ESP_LOGE(TAG_T, "Closing time socket...");
+    ESP_LOGW(TAG_T_CLOCK, "Closing time socket...");
     shutdown(sock2, 0);
     close(sock2);
+}
+
+uint8_t check_internet_conexion()
+{
+    uint8_t conexion_f = 0;
+
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_addr.s_addr = inet_addr(HOST_GOOGLE);
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(PORT_GOOGLE);
+
+    while(1)
+    {
+        char local_buffer[1024];
+
+        sock3 = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+        if (sock3 < 0) {
+            ESP_LOGE(TAG_T, "Unable to create socket: errno %d", errno);
+            break;
+        }
+        ESP_LOGI(TAG_T, "Socket created, connecting to %s:%d", HOST_GOOGLE, PORT_GOOGLE);
+
+        // Set timeout
+        struct timeval timeout;
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+        setsockopt(sock3, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+
+        int err = connect(sock3, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+        if (err != 0) {
+            ESP_LOGE(TAG_T, "Socket unable to connect: errno %d", errno);
+            break;
+        }
+        ESP_LOGI(TAG_T, "Successfully connected to: %s", HOST_GOOGLE);
+
+        strcpy(time_api_message, "GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n");
+
+        //send hhtp like request
+        send(sock3, time_api_message, strlen(time_api_message), 0);  
+        ESP_LOGI(TAG_T, "Message send to %s Send %d bytes", HOST_GOOGLE, strlen(time_api_message));
+
+        //receive text
+        int len = recv(sock3, local_buffer, sizeof(local_buffer) - 1, 0);
+        if(len < 0) 
+        {
+            ESP_LOGE(TAG_T, "Error occurred during receiving: errno %d", errno);
+            break;
+        }
+
+        local_buffer[len] = '\0'; // terminator
+        ESP_LOGI(TAG_T, "Received %d bytes", len);
+        ESP_LOGI(TAG_T, "There is an internet conexion.");
+        conexion_f = 1;
+
+        break;
+    }
+    ESP_LOGE(TAG_T, "Closing google socket...");
+    shutdown(sock3, 0);
+    close(sock3);
+
+    return conexion_f;
 }
 
 void handleRead_tcp(char command[][128], char *tx_buffer)
@@ -682,6 +787,8 @@ void codeMessage(char *message, char *password)
 
 void buildCommand(char *string_com, ...)
 {
+    strcpy(string_com, "\0");
+
     va_list args;
     va_start(args, string_com);
     char str_temp[STR_LEN];

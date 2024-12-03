@@ -62,6 +62,9 @@
 #define PORT_TIME 80
 #define HOST_TIME "213.188.196.246" //worldtime api 
 
+#define PORT_GOOGLE 80
+#define HOST_GOOGLE "142.250.188.14" //Google
+
 //#define SEND_MESSAGE "UABC:BCR:X:X:test"
 #define SEND_MESSAGE "UABC:BCR:M:S:6644871544:Hola_desde_esp"
 
@@ -99,7 +102,7 @@ extern volatile uint8_t send_ack_f;
 //---CLOCK---
 //#define PRINT_TIME
 #define CHECK_TIME_OFFSET
-#define CLOCK_MIN_TO_CHECK 1
+#define CLOCK_MIN_TO_CHECK 5
 
 extern volatile uint16_t hours_true, minutes_true, seconds_true, hours, minutes, seconds;
 
@@ -121,11 +124,13 @@ void setTimer();
 
 void tcp_server_task(void *pvParameters);
 
-void connect_to_host(void *pvParameters, char *host_parameter, int port);
+void connect_to_server(void *pvParameters, char *host_parameter, int port);
 
 void tcp_time_task(void *pvParameters);
 
 void connect_to_host_time(char *host_parameter, int port);
+
+uint8_t check_internet_conexion();
 
 void button_event_task(void *pvParameters);
 
