@@ -236,22 +236,34 @@ void button_event_task(void *pvParameters) //evento de boton
 void tcp_server_task(void *pvParameters)
 {
     ESP_LOGI(TAG_T, "Starting tcp server task...");
+    
+    uint8_t local_counter = 0;
 
     while(1)
     {
-        ESP_LOGE(TAG_T, "Conecting to iot tcp server...");
+        ESP_LOGI(TAG_T, "Conecting to iot tcp server...");
         connect_to_server(pvParameters, HOST_IOT_UABC, PORT_IOT_UABC);
 
-        if(!check_internet_conexion())
+        if(local_counter >= TCP_SERVER_MAX_RETRY)
             break;
 
-        ESP_LOGW(TAG_T, "Retrying conexion to IOT server...");
+        if(!check_internet_connection())
+        {
+            ESP_LOGE(TAG_T, "Could not validate internet connection.");
+            break;
+        }
+
+        
+        ESP_LOGW(TAG_T, "Retrying connection to IOT server... Attempt %d/%d", local_counter+1, TCP_SERVER_MAX_RETRY);  
+        local_counter++;
+
         vTaskDelay(pdMS_TO_TICKS(4000));
     }
 
     ESP_LOGW(TAG_T, "Conecting to local tcp server...");
     connect_to_server(pvParameters, HOST_LOCAL, PORT_LOCAL);
     
+    ESP_LOGE(TAG_T, "Could not connect to local tcp server.");
     ESP_LOGE(TAG_T, "TCP task closed.");
     vTaskDelete(NULL);
 }
@@ -530,7 +542,7 @@ void connect_to_host_time(char *host_parameter, int port)
 
         //send hhtp like request
         send(sock2, time_api_message, strlen(time_api_message), 0);  
-        ESP_LOGI(TAG_T_CLOCK, "Message send to %s Send %d bytes", host_parameter, strlen(time_api_message));
+        ESP_LOGI(TAG_T_CLOCK, "Message send to %s (%d bytes)", host_parameter, strlen(time_api_message));
 
         //receive text
         int len = recv(sock2, local_buffer, sizeof(local_buffer) - 1, 0);
@@ -604,9 +616,9 @@ void connect_to_host_time(char *host_parameter, int port)
     close(sock2);
 }
 
-uint8_t check_internet_conexion()
+uint8_t check_internet_connection()
 {
-    uint8_t conexion_f = 0;
+    uint8_t connection_f = 0;
 
     struct sockaddr_in dest_addr;
     dest_addr.sin_addr.s_addr = inet_addr(HOST_GOOGLE);
@@ -635,13 +647,13 @@ uint8_t check_internet_conexion()
             ESP_LOGE(TAG_T, "Socket unable to connect: errno %d", errno);
             break;
         }
-        ESP_LOGI(TAG_T, "Successfully connected to: %s", HOST_GOOGLE);
+        ESP_LOGI(TAG_T, "Successfully connected to: %s (Google)", HOST_GOOGLE);
 
         strcpy(time_api_message, "GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n");
 
         //send hhtp like request
         send(sock3, time_api_message, strlen(time_api_message), 0);  
-        ESP_LOGI(TAG_T, "Message send to %s Send %d bytes", HOST_GOOGLE, strlen(time_api_message));
+        ESP_LOGI(TAG_T, "Message send to %s (%d bytes)", HOST_GOOGLE, strlen(time_api_message));
 
         //receive text
         int len = recv(sock3, local_buffer, sizeof(local_buffer) - 1, 0);
@@ -653,8 +665,8 @@ uint8_t check_internet_conexion()
 
         local_buffer[len] = '\0'; // terminator
         ESP_LOGI(TAG_T, "Received %d bytes", len);
-        ESP_LOGI(TAG_T, "There is an internet conexion.");
-        conexion_f = 1;
+        ESP_LOGI(TAG_T, "There is an internet connection.");
+        connection_f = 1;
 
         break;
     }
@@ -662,7 +674,7 @@ uint8_t check_internet_conexion()
     shutdown(sock3, 0);
     close(sock3);
 
-    return conexion_f;
+    return connection_f;
 }
 
 void handleRead_tcp(char command[][128], char *tx_buffer)

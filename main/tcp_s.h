@@ -36,8 +36,10 @@
 #include "pwm.h"
 #include "mqtt.h"
 
+#define TCP_SERVER_MAX_RETRY 3
+
 //communication type
-//#define NORMAL_COM
+#define NORMAL_COM
 //#define DECODE_COM
 
 #define TIMER_RESET 7000 //miliseconds
@@ -46,18 +48,15 @@
 #define COMMANDS_QUANTITY 10
 
 #ifdef NORMAL_COM
-#define PORT_IOT_UABC 8266
+#define PORT_IOT_UABC 8276
 #endif
-
 #ifdef DECODE_COM
 #define PORT_IOT_UABC 8277 //codificado
 #endif
-
-#define PORT_IOT_UABC 8276
 #define HOST_IOT_UABC "82.180.173.228" //iot-uabc.site
 
 #define PORT_LOCAL 8266
-#define HOST_LOCAL "192.168.100.14" //esp server
+#define HOST_LOCAL "192.168.100.14" //esp local server
 
 #define PORT_TIME 80
 #define HOST_TIME "213.188.196.246" //worldtime api 
@@ -65,8 +64,9 @@
 #define PORT_GOOGLE 80
 #define HOST_GOOGLE "142.250.188.14" //Google
 
+//unsused
 //#define SEND_MESSAGE "UABC:BCR:X:X:test"
-#define SEND_MESSAGE "UABC:BCR:M:S:6644871544:Hola_desde_esp"
+//#define SEND_MESSAGE "UABC:BCR:M:S:6644871544:Hola_desde_esp"
 
 #define SERVER_ID "UABC"
 
@@ -130,7 +130,7 @@ void tcp_time_task(void *pvParameters);
 
 void connect_to_host_time(char *host_parameter, int port);
 
-uint8_t check_internet_conexion();
+uint8_t check_internet_connection();
 
 void button_event_task(void *pvParameters);
 

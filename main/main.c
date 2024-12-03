@@ -22,6 +22,8 @@
 #include "pwm.h"
 #include "mqtt.h"
 
+#define CONNECT_TO_SERVER
+
 #define STR_LEN 128
 
 const char *TAG_MAIN = "MAIN";
@@ -144,13 +146,15 @@ void tcp_or_udp(uint8_t ip_flag)
         //tcp clock task
         xTaskCreate(clock_task, "clock_task", 4096, NULL, 5, NULL);
 
-        //tcp iot server
-        task_params_t params = {
-            .str1 = user,
-            .str2 = dev_num,
-            .str3 = "\0",
-        };
-        //xTaskCreate(tcp_server_task, "tcp_server_task", 4096, &params, 5, &tcp_server_handle);
+        #ifdef CONNECT_TO_SERVER
+            //tcp iot server
+            task_params_t params = {
+                .str1 = user,
+                .str2 = dev_num,
+                .str3 = "\0",
+            };
+            xTaskCreate(tcp_server_task, "tcp_server_task", 4096, &params, 5, &tcp_server_handle);
+        #endif
 
         //mqtt_app_start();
     }
