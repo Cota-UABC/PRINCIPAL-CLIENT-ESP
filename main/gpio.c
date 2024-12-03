@@ -14,6 +14,9 @@ void init_gpio(void)
     gpio_set_direction(LED_PWM, GPIO_MODE_OUTPUT);
     gpio_set_level(LED_PWM, 0);
 
+    gpio_set_direction(LED_AP, GPIO_MODE_OUTPUT);
+    gpio_set_level(LED_AP, 0);
+
     gpio_set_direction(BUTTON, GPIO_MODE_INPUT);
     gpio_pulldown_en(BUTTON);
 }
@@ -33,6 +36,17 @@ void set_led(uint8_t state)
     }
 }
 
+void update_gpio_value_task(void *pvParameters)
+{
+    while(1)
+    {
+        set_led(l_state);
+        read_adc_input(CHANNEL_0);
+        
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    vTaskDelete(NULL);
+}
 
 void get_button_task(void *pvParameters)
 {
@@ -66,4 +80,5 @@ void get_button_task(void *pvParameters)
     }
 
     vSemaphoreDelete(edge_mutex);
+    vTaskDelete(NULL);
 }

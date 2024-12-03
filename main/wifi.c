@@ -13,7 +13,7 @@ uint8_t ip_flag;
 
 #define MANUAL_SSID_PASS
 
-#define SSID "Totalplay-2.4G-b518"
+#define SSID "Totalplay-2.4G-b518_X"
 #define PASS "Qxm2EAzh99Ce7Lfk"
 
 //#define SSID "Totalplay-CF3C"

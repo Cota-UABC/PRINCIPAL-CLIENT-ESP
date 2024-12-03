@@ -12,14 +12,14 @@
 
 #include "host_name.h"
 #include "nvs_esp.h"
+#include "gpio.h"
 
 #define WIFI_SSID      "local_AP_ESP"
-//#define WIFI_SSID      "softAP_SE"
 #define WIFI_PASS      "12345678"
-#define MAX_STA_CONN    10
+#define MAX_STA_CONN    5
 
 static const char *TAG_AP = "softAP";
-uint8_t active_ap = 0;
+uint8_t volatile active_ap = 0;
 
 static void wifi_e_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
@@ -65,12 +65,18 @@ esp_err_t wifi_init_softap()
 
 void init_ap()
 {
+    active_ap = 0;
+
     /*esp_err_t error = nvs_flash_init();
     if(error == ESP_ERR_NVS_NO_FREE_PAGES || error == ESP_ERR_NVS_NEW_VERSION_FOUND) 
     {
         nvs_flash_erase();
         nvs_flash_init();
     }*/
+    
+    //activate led indicator
+    gpio_set_level(LED_AP, 1);
+
     esp_netif_init();
     esp_err_t ret = esp_event_loop_create_default();
     if (ret == ESP_ERR_INVALID_STATE) {
