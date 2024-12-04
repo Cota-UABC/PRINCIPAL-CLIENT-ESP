@@ -154,7 +154,7 @@ void tcp_or_udp(uint8_t ip_flag)
             params.str3 = "\0";
             
             //printf("param str: %s", params.str1);
-            xTaskCreate(tcp_server_task, "tcp_server_task", 4096, &params, 5, &tcp_server_handle);
+            xTaskCreate(tcp_server_task, "tcp_server_task", 8192, &params, 5, &tcp_server_handle);
         #endif
 
         //mqtt_app_start();

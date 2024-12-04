@@ -16,6 +16,8 @@ TaskHandle_t button_handle = NULL;
 char host[30], rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN], 
     pasword_iot[50], pasword_iot_desif[50], login[STR_LEN], keep_alive[STR_LEN], time_api_message[STR_LEN];
 
+SemaphoreHandle_t tx_buffer_mutex = 0;
+
 //---BUTTON---
 uint8_t send_f = 0;
 uint64_t button_press_time=0, current_time, diff_time;
@@ -37,7 +39,7 @@ typedef struct {
 } task_params_t;
 
 //patch
-void buildCommand(char *string_com, ...);
+void build_command(char *string_com, ...);
 
 void clock_task(void *pvParameters)
 {
@@ -142,9 +144,13 @@ void vTimerCallback(TimerHandle_t pxTimer)
 {
 	ESP_LOGI(TAG_T, "Timer called");
 
-    sprintf(tx_buffer, keep_alive);
+    LOCK_MUTEX(tx_buffer_mutex)
+        sprintf(tx_buffer, keep_alive);
+    UNLOCK_MUTEX(tx_buffer_mutex)
     #ifdef DECODE_COM
+        LOCK_MUTEX(tx_buffer_mutex)
         codeMessage(tx_buffer, pasword_iot_desif);
+        UNLOCK_MUTEX(tx_buffer_mutex)
     #endif
     send(sock, tx_buffer, strlen(tx_buffer), 0);
     ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
@@ -196,7 +202,7 @@ void button_event_task(void *pvParameters) //evento de boton
     while(1)
     {
        /*
-        //send sms unused or maybe deprecated
+        //send sms unused or  deprecated
         current_time = esp_timer_get_time();
         current_time =+ 60000000; 
         diff_time = current_time - button_press_time;
@@ -219,16 +225,14 @@ void button_event_task(void *pvParameters) //evento de boton
         else if(!edge)
             send_f = 0;
        */
-       if(xSemaphoreTake(edge_mutex, portMAX_DELAY))
-       {
-            //if button pressed
-            if(edge)
-            {
-                ESP_LOGI(TAG_T, "ESP local time: %d:%d:%d", hours, minutes, seconds);
-                edge = 0;
-            }
-            xSemaphoreGive(edge_mutex);
-       }
+        LOCK_MUTEX(edge_mutex)
+        //if button pressed
+        if(edge)
+        {
+            ESP_LOGI(TAG_T, "ESP local time: %d:%d:%d", hours, minutes, seconds);
+            edge = 0;
+        }
+        UNLOCK_MUTEX(edge_mutex)
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
@@ -236,6 +240,8 @@ void button_event_task(void *pvParameters) //evento de boton
 void tcp_server_task(void *pvParameters)
 {
     ESP_LOGI(TAG_T, "Starting tcp server task...");
+
+    tx_buffer_mutex = xSemaphoreCreateMutex();
     
     uint8_t local_counter = 0;
 
@@ -308,7 +314,7 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
         ESP_LOGI(TAG_T, "Device number: %s", dev_num);
 
         
-        buildCommand(login, SERVER_ID, user_tcp, dev_num, "L", "S", "login_server", "\0");
+        build_command(login, SERVER_ID, user_tcp, dev_num, "L", "S", "login_server", "\0");
         sprintf(tx_buffer, login);
 
         send(sock, tx_buffer, strlen(tx_buffer), 0);  
@@ -355,15 +361,19 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
             }
         #endif 
         //first keep alive
-        buildCommand(keep_alive, SERVER_ID, user_tcp, dev_num, "K", "S", "keep_alive", "\0");
+        build_command(keep_alive, SERVER_ID, user_tcp, dev_num, "K", "S", "keep_alive", "\0");
         sprintf(tx_buffer, keep_alive);
         #ifdef DECODE_COM
-            codeMessage(tx_buffer, pasword_iot_desif); 
+            LOCK_MUTEX(tx_buffer_mutex)
+            codeMessage(tx_buffer, pasword_iot_desif);
+            UNLOCK_MUTEX(tx_buffer_mutex)
         #endif
         send(sock, tx_buffer, strlen(tx_buffer), 0);
         ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
 
         setTimer();
+
+        //deprecated
         //xTaskCreate(button_event_task, "button_event_task", 4096, NULL, 4, &button_handle);
 
         counter_no_ack = 0;
@@ -381,7 +391,6 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
                 send_ack_f++;
 
             strcpy(rx_buffer, "\0");
-            //ESP_LOGW(TAG_T, "WAITING MESSAGE");
             int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
             if(len > 0)
             {
@@ -442,20 +451,22 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
                 if(strcmp(command[ID_T], SERVER_ID) == 0 && strcmp(command[USER_T], user_tcp) == 0  && strcmp(command[DEV_NUM_T], dev_num) == 0 )
                 {
                     if(strcmp(command[OPERATION_T], "R") == 0) //LECTURA
-                        handleRead_tcp(command, tx_buffer);
+                        handle_read_tcp(command, tx_buffer);
                         
                     else if(strcmp(command[OPERATION_T], "W") == 0) //ESCRITURA
-                        handleWrite_tcp(command, tx_buffer);
+                        handle_write_tcp(command, tx_buffer);
                         
                     else
-                        nackMessage_tcp(tx_buffer); 
+                        nack_message_tcp(tx_buffer); 
                 }
                 else
-                    nackMessage_tcp(tx_buffer);
+                    nack_message_tcp(tx_buffer);
 
                 //vTaskDelay(pdMS_TO_TICKS(50));
                 #ifdef DECODE_COM
+                    LOCK_MUTEX(tx_buffer_mutex)
                     codeMessage(tx_buffer, pasword_iot_desif);
+                    UNLOCK_MUTEX(tx_buffer_mutex)
                 #endif
                 send(sock, tx_buffer, strlen(tx_buffer), 0);
                 ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
@@ -676,59 +687,74 @@ uint8_t check_internet_connection()
     return connection_f;
 }
 
-void handleRead_tcp(char command[][128], char *tx_buffer)
+void handle_read_tcp(char command[][128], char *tx_buffer)
 {
-    char str[STR_LEN] = "NULL";
+    char nvs_value[STR_LEN/4] = "NULL", local_buffer[STR_LEN];
 
     if(strcmp(command[ELEMENT_T], "L") == 0)
-        sprintf(tx_buffer, "ACK:%d", l_state);
+    {
+        sprintf(local_buffer, "ACK:%d", l_state);
+        message_to_buffer(tx_buffer, local_buffer);
+    }
     else if(strcmp(command[ELEMENT_T], "A") == 0)
-        sprintf(tx_buffer, "ACK:%d", adc_value);
+    {
+        sprintf(local_buffer, "ACK:%d", adc_value);
+        message_to_buffer(tx_buffer, local_buffer);
+    }
     else if(strcmp(command[ELEMENT_T], "WIFI") == 0)
     {
-        read_nvs(key_ssid, str, sizeof(str));
-        sprintf(tx_buffer, "ACK:%s", str);
+        read_nvs(key_ssid, nvs_value, sizeof(nvs_value));
+        sprintf(local_buffer, "ACK:%s", nvs_value);
+        message_to_buffer(tx_buffer, local_buffer);
     }
     else if(strcmp(command[ELEMENT_T], "PASS") == 0)
     {
-        read_nvs(key_pass, str, sizeof(str));
-        sprintf(tx_buffer, "ACK:%s", str);
+        read_nvs(key_pass, nvs_value, sizeof(nvs_value));
+        sprintf(local_buffer, "ACK:%s", nvs_value);
+        message_to_buffer(tx_buffer, local_buffer);
     }
     else if(strcmp(command[ELEMENT_T], "P") == 0)
     {
         uint32_t value_pwm = ledc_get_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-        sprintf(tx_buffer, "ACK:%" PRIu32 "", value_pwm);
+        sprintf(local_buffer, "ACK:%" PRIu32 "", value_pwm);
+        message_to_buffer(tx_buffer, local_buffer);
     }
     else
-        nackMessage_tcp(tx_buffer);
+        nack_message_tcp(tx_buffer);
 }
 
-void handleWrite_tcp(char command[][128], char *tx_buffer)
+void handle_write_tcp(char command[][128], char *tx_buffer)
 {
+    char local_buffer[STR_LEN];
+
     if(strcmp(command[ELEMENT_T], "L") == 0)
     {
         if(strcmp(command[VALUE_T], "1") == 0)
         {
-            sprintf(tx_buffer, "ACK");
+            sprintf(local_buffer, "ACK");
+            message_to_buffer(tx_buffer, local_buffer);
             l_state = 1;
         }
         else if(strcmp(command[VALUE_T], "0") == 0)
         {
-            sprintf(tx_buffer, "ACK");
+            sprintf(local_buffer, "ACK");
+            message_to_buffer(tx_buffer, local_buffer);
             l_state = 0;
         }
         else
-            nackMessage_tcp(tx_buffer);
+            nack_message_tcp(tx_buffer);
     }
     else if(strcmp(command[ELEMENT_T], "WIFI") == 0)
     {
         write_nvs(key_ssid, command[VALUE_T]);
-        sprintf(tx_buffer, "ACK:%s", command[VALUE_T]);
+        sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
+        message_to_buffer(tx_buffer, local_buffer);
     }
     else if(strcmp(command[ELEMENT_T], "PASS") == 0)
     {
         write_nvs(key_pass, command[VALUE_T]);
-        sprintf(tx_buffer, "ACK:%s", command[VALUE_T]);
+        sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
+        message_to_buffer(tx_buffer, local_buffer);
     }
     else if(strcmp(command[ELEMENT_T], "P") == 0)
     {
@@ -738,7 +764,8 @@ void handleWrite_tcp(char command[][128], char *tx_buffer)
                         LEDC_CHANNEL_0, 
                         (uint32_t)(0)); //0%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(tx_buffer, "ACK:%s", command[VALUE_T]);
+            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
+            message_to_buffer(tx_buffer, local_buffer);
         }
         else if(strcmp(command[VALUE_T], "25") == 0)
         {
@@ -746,7 +773,8 @@ void handleWrite_tcp(char command[][128], char *tx_buffer)
                         LEDC_CHANNEL_0, 
                         (uint32_t)(MAX_DUTY_RESOLUTION * 0.25)); //25%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(tx_buffer, "ACK:%s", command[VALUE_T]);
+            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
+            message_to_buffer(tx_buffer, local_buffer);
         }
         else if(strcmp(command[VALUE_T], "50") == 0)
         {
@@ -754,7 +782,8 @@ void handleWrite_tcp(char command[][128], char *tx_buffer)
                         LEDC_CHANNEL_0, 
                         (uint32_t)(MAX_DUTY_RESOLUTION * 0.5)); //50%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(tx_buffer, "ACK:%s", command[VALUE_T]);
+            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
+            message_to_buffer(tx_buffer, local_buffer);
         }
         else if(strcmp(command[VALUE_T], "100") == 0)
         {
@@ -762,18 +791,28 @@ void handleWrite_tcp(char command[][128], char *tx_buffer)
                         LEDC_CHANNEL_0, 
                         (uint32_t)(MAX_DUTY_RESOLUTION)); //100%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(tx_buffer, "ACK:%s", command[VALUE_T]);
+            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
+            message_to_buffer(tx_buffer, local_buffer);
         }
         else
-        nackMessage_tcp(tx_buffer);
+        nack_message_tcp(tx_buffer);
     }
     else
-        nackMessage_tcp(tx_buffer);
+        nack_message_tcp(tx_buffer);
 }
 
-void nackMessage_tcp(char *str)
+void message_to_buffer(char *buffer, char *message)
 {
-    sprintf(str, "NACK");
+    LOCK_MUTEX(tx_buffer_mutex)
+    sprintf(buffer, message);
+    UNLOCK_MUTEX(tx_buffer_mutex)
+}
+
+void nack_message_tcp(char *buffer)
+{
+    LOCK_MUTEX(tx_buffer_mutex)
+    sprintf(buffer, "NACK");
+    UNLOCK_MUTEX(tx_buffer_mutex)
 }
 
 void aplicarXor(char *original_message, char *xor_message)
@@ -787,7 +826,7 @@ void aplicarXor(char *original_message, char *xor_message)
 void codeMessage(char *message, char *password)
 {
     counter = 0;
-
+    
     for(int i=0; i < strlen(message); i++)
     {
         message[i] = message[i] ^ password[counter];
@@ -798,7 +837,7 @@ void codeMessage(char *message, char *password)
     }
 }
 
-void buildCommand(char *string_com, ...)
+void build_command(char *string_com, ...)
 {
     strcpy(string_com, "\0");
 

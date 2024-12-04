@@ -89,9 +89,16 @@ extern const int timerId;
 extern TaskHandle_t tcp_server_handle;
 extern TaskHandle_t button_handle;
 
+//macros
+#define LOCK_MUTEX(mutex) if (xSemaphoreTake(mutex, portMAX_DELAY)) {
+#define UNLOCK_MUTEX(mutex) xSemaphoreGive(mutex); }
+
 //extern char user_tcp[STR_LEN];
 
-extern char rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN];
+extern char rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN],
+    pasword_iot[50], pasword_iot_desif[50], login[STR_LEN], keep_alive[STR_LEN], time_api_message[STR_LEN];
+
+extern SemaphoreHandle_t tx_buffer_mutex;
 
 //---BUTTON---
 extern uint8_t send_f;
@@ -134,16 +141,18 @@ uint8_t check_internet_connection();
 
 void button_event_task(void *pvParameters);
 
-void handleRead_tcp(char command[][128], char *tx_buffer);
+void handle_read_tcp(char command[][128], char *tx_buffer);
 
-void handleWrite_tcp(char command[][128], char *tx_buffer);
+void handle_write_tcp(char command[][128], char *tx_buffer);
 
-void nackMessage_tcp(char *str);
+void message_to_buffer(char *buffer, char *message);
+
+void nack_message_tcp(char *buffer);
 
 void aplicarXor(char *original_message, char *mensaje_cifrado);
 
 void codeMessage(char *message, char *password);
 
-void buildCommand(char *string_com, ...);
+void build_command(char *string_com, ...);
 
 #endif
