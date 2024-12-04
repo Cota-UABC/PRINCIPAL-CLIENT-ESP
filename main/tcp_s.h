@@ -36,7 +36,7 @@
 #include "pwm.h"
 #include "mqtt.h"
 
-#define TCP_SERVER_MAX_RETRY 3
+#define TCP_SERVER_MAX_RETRY 0
 
 //communication type
 #define NORMAL_COM
@@ -56,7 +56,7 @@
 #define HOST_IOT_UABC "82.180.173.228" //iot-uabc.site
 
 #define PORT_LOCAL 8266
-#define HOST_LOCAL "192.168.100.14" //esp local server
+#define HOST_LOCAL "192.168.100.15" //esp local server
 
 #define PORT_TIME 80
 #define HOST_TIME "213.188.196.246" //worldtime api 
@@ -89,7 +89,7 @@ extern const int timerId;
 extern TaskHandle_t tcp_server_handle;
 extern TaskHandle_t button_handle;
 
-extern char user_tcp[STR_LEN];
+//extern char user_tcp[STR_LEN];
 
 extern char rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN];
 

@@ -41,6 +41,8 @@ typedef struct
     char *str3;
 } task_params_t;
 
+task_params_t params;
+
 int validate_read_nvs_values(char *ssid, char *pass, char *dev_name, char *user, char *dev_num);
 
 void activate_access_point();
@@ -147,12 +149,11 @@ void tcp_or_udp(uint8_t ip_flag)
         xTaskCreate(clock_task, "clock_task", 4096, NULL, 5, NULL);
 
         #ifdef CONNECT_TO_SERVER
-            //tcp iot server
-            task_params_t params = {
-                .str1 = user,
-                .str2 = dev_num,
-                .str3 = "\0",
-            };
+            params.str1 = user;
+            params.str2 = dev_num;
+            params.str3 = "\0";
+            
+            //printf("param str: %s", params.str1);
             xTaskCreate(tcp_server_task, "tcp_server_task", 4096, &params, 5, &tcp_server_handle);
         #endif
 

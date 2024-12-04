@@ -11,7 +11,7 @@ static const char *TAG_T_CLOCK = "TCP_CLOCK";
 TaskHandle_t tcp_server_handle = NULL;
 TaskHandle_t button_handle = NULL;
 
-char user_tcp[STR_LEN];
+//char user_tcp[STR_LEN];
 
 char host[30], rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN], 
     pasword_iot[50], pasword_iot_desif[50], login[STR_LEN], keep_alive[STR_LEN], time_api_message[STR_LEN];
@@ -252,7 +252,6 @@ void tcp_server_task(void *pvParameters)
             ESP_LOGE(TAG_T, "Could not validate internet connection.");
             break;
         }
-
         
         ESP_LOGW(TAG_T, "Retrying connection to IOT server... Attempt %d/%d", local_counter+1, TCP_SERVER_MAX_RETRY);  
         local_counter++;

@@ -6,6 +6,8 @@ USAGE:
 
 Port: 4080
 
+Example: UABC:W:L:1:example_commd
+
 Commands:
 UABC:
     R:
