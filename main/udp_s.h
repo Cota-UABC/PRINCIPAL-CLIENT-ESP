@@ -16,7 +16,7 @@ UABC:
         WIFI
         PASS
         DEV
-        USER:
+        USER
         DEV_NUM
         IP
         P
@@ -53,6 +53,7 @@ UABC:
 #include "nvs_esp.h"
 #include "host_name.h"
 #include "pwm.h"
+#include "string_to_uint8.h"
 
 #define PORT 4080
 

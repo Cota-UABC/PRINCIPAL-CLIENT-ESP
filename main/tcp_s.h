@@ -45,7 +45,7 @@
 #define TIMER_RESET 7000 //miliseconds
 
 #define STR_LEN 128
-#define COMMANDS_QUANTITY 10
+#define COMMAND_QUANTITY 10
 
 #ifdef NORMAL_COM
 #define PORT_IOT_UABC 8276
@@ -64,11 +64,7 @@
 #define PORT_GOOGLE 80
 #define HOST_GOOGLE "142.250.188.14" //Google
 
-//unsused
-//#define SEND_MESSAGE "UABC:BCR:X:X:test"
-//#define SEND_MESSAGE "UABC:BCR:M:S:6644871544:Hola_desde_esp"
-
-#define SERVER_ID "UABC"
+#define SERVER_ID 0xDA7A
 
 //command parts
 #define ID_T 0
@@ -78,6 +74,34 @@
 #define ELEMENT_T 4
 #define VALUE_T 5
 #define COMMENT_T 6
+
+//comand part lenghts
+#define ID_BIT_LEN 16
+#define USER_BIT_LEN 5
+#define DEV_BIT_LEN 1
+#define OPERATION_BIT_LEN 1
+#define ELEMENT_BIT_LEN 3
+#define VALUE_BIT_LEN 3
+
+//OPERATION hex
+#define LOGIN 0x00
+#define KEEP 0x01
+#define READ 0x02
+#define WRITE 0x03
+
+//ELEMENT hex
+#define SERVER 0x00
+#define LED_HEX 0x01
+#define ADC_HEX 0x02
+#define PWM 0x03
+
+#define DUMMY_HEX 0xfe
+
+#define ACK 0x01
+#define NACK 0x02
+
+extern uint8_t bit_lengths[];
+extern size_t num_elements;
 
 #define TIME_STRING_LEN 16
 
@@ -95,8 +119,9 @@ extern TaskHandle_t button_handle;
 
 //extern char user_tcp[STR_LEN];
 
-extern char rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN],
-    pasword_iot[50], pasword_iot_desif[50], login[STR_LEN], keep_alive[STR_LEN], time_api_message[STR_LEN];
+extern char host[30], *ptr, pasword_iot[50], pasword_iot_desif[50],time_api_message[STR_LEN];
+extern uint16_t command[COMMAND_QUANTITY];
+extern uint32_t tx_buffer, rx_buffer, login, keep_alive;
 
 extern SemaphoreHandle_t tx_buffer_mutex;
 
@@ -121,6 +146,10 @@ extern SemaphoreHandle_t real_time_key, check_time_key;
 extern uint16_t counter, counter_no_ack;
 
 
+void tcp_server_task(void *pvParameters);
+
+void connect_to_server(void *pvParameters, char *host_parameter, int port);
+
 void clock_task(void *pvParameters);
 
 void check_time_offset_task(void *pvParameters);
@@ -128,10 +157,6 @@ void check_time_offset_task(void *pvParameters);
 void vTimerCallback(TimerHandle_t pxTimer);
 
 void setTimer();
-
-void tcp_server_task(void *pvParameters);
-
-void connect_to_server(void *pvParameters, char *host_parameter, int port);
 
 void tcp_time_task(void *pvParameters);
 
@@ -141,18 +166,20 @@ uint8_t check_internet_connection();
 
 void button_event_task(void *pvParameters);
 
-void handle_read_tcp(char command[][128], char *tx_buffer);
+void handle_read_tcp(uint16_t command[], uint32_t tx_buffer);
 
-void handle_write_tcp(char command[][128], char *tx_buffer);
+void handle_write_tcp(uint16_t command[], uint32_t tx_buffer);
 
-void message_to_buffer(char *buffer, char *message);
+void message_to_buffer(uint32_t *buffer, uint32_t message);
 
-void nack_message_tcp(char *buffer);
+void nack_message_tcp(uint32_t *buffer);
 
 void aplicarXor(char *original_message, char *mensaje_cifrado);
 
 void codeMessage(char *message, char *password);
 
-void build_command(char *string_com, ...);
+void seperate_command(uint16_t input, uint8_t bit_lengths[], size_t num_lengths, uint16_t command[]);
+
+uint32_t add_value_to_ack(uint8_t ack, uint16_t val);
 
 #endif

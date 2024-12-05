@@ -1,5 +1,8 @@
 #include "tcp_s.h"
 
+uint8_t bit_lengths[] = {VALUE_BIT_LEN, ELEMENT_BIT_LEN, OPERATION_BIT_LEN, DEV_BIT_LEN, USER_BIT_LEN, ID_BIT_LEN};
+size_t num_elements = sizeof(bit_lengths) / sizeof(bit_lengths[0]);
+
 int sock, sock2, sock3;
 
 TimerHandle_t timer1;
@@ -13,8 +16,10 @@ TaskHandle_t button_handle = NULL;
 
 //char user_tcp[STR_LEN];
 
-char host[30], rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN], 
-    pasword_iot[50], pasword_iot_desif[50], login[STR_LEN], keep_alive[STR_LEN], time_api_message[STR_LEN];
+//---server---
+char host[30], *ptr, pasword_iot[50], pasword_iot_desif[50], time_api_message[STR_LEN];
+uint16_t command[COMMAND_QUANTITY];
+uint32_t tx_buffer, rx_buffer, login, keep_alive;
 
 SemaphoreHandle_t tx_buffer_mutex = 0;
 
@@ -33,13 +38,251 @@ SemaphoreHandle_t real_time_key = 0, check_time_key = 0;
 uint16_t counter, counter_no_ack=0;
 
 typedef struct {
-    char *str1;
-    char *str2;
-    char *str3;
+    uint8_t user;
+    uint8_t dev;
+    uint8_t dummy;
 } task_params_t;
 
 //patch
-void build_command(char *string_com, ...);
+void build_command(uint32_t *str, ...);
+
+void tcp_server_task(void *pvParameters)
+{
+    ESP_LOGI(TAG_T, "Starting tcp server task...");
+
+    tx_buffer_mutex = xSemaphoreCreateMutex();
+    
+    uint8_t local_counter = 0;
+
+    while(1)
+    {
+        ESP_LOGI(TAG_T, "Conecting to iot tcp server...");
+        connect_to_server(pvParameters, HOST_IOT_UABC, PORT_IOT_UABC);
+
+        if(local_counter >= TCP_SERVER_MAX_RETRY)
+            break;
+
+        if(!check_internet_connection())
+        {
+            ESP_LOGE(TAG_T, "Could not validate internet connection.");
+            break;
+        }
+        
+        ESP_LOGW(TAG_T, "Retrying connection to IOT server... Attempt %d/%d", local_counter+1, TCP_SERVER_MAX_RETRY);  
+        local_counter++;
+
+        vTaskDelay(pdMS_TO_TICKS(4000));
+    }
+
+    ESP_LOGW(TAG_T, "Conecting to local tcp server...");
+    connect_to_server(pvParameters, HOST_LOCAL, PORT_LOCAL);
+    
+    ESP_LOGE(TAG_T, "Could not connect to local tcp server.");
+    ESP_LOGE(TAG_T, "TCP task closed.");
+    vTaskDelete(NULL);
+}
+
+void connect_to_server(void *pvParameters, char *host_parameter, int port)
+{
+    sprintf(host, host_parameter);
+
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_addr.s_addr = inet_addr(host);
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(port);
+
+    while(1)
+    {
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+        if (sock < 0) {
+            ESP_LOGE(TAG_T, "Unable to create socket: errno %d", errno);
+            break;
+        }
+        ESP_LOGI(TAG_T, "Socket created, connecting to %s:%d", host, port);
+
+        // Set timeout
+        struct timeval timeout;
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+
+        int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+        if (err != 0) {
+            ESP_LOGE(TAG_T, "Socket unable to connect: errno %d", errno);
+            break;
+        }
+        ESP_LOGI(TAG_T, "Successfully connected to: %s", host);
+
+        //get struct from parameter
+        task_params_t *params = (task_params_t *)pvParameters;
+        uint8_t user_tcp = params->user;
+        uint8_t dev_num = params->dev;
+
+        ESP_LOGI(TAG_T, "User: %02X", user_tcp);
+        ESP_LOGI(TAG_T, "Device number: %02X", dev_num);
+
+        
+        build_command(&login, SERVER_ID, user_tcp, dev_num, LOGIN, SERVER);
+        tx_buffer = login;
+
+        send(sock, &tx_buffer, sizeof(tx_buffer), 0);  
+        ESP_LOGI(TAG_T, "Message send to %s: %x", host, (unsigned int)tx_buffer);
+
+        int len = recv(sock, &rx_buffer, sizeof(rx_buffer), 0);
+        if(len < 0) 
+        {
+            ESP_LOGE(TAG_T, "Error occurred during receiving: errno %d", errno);
+            break;
+        }
+
+        ESP_LOGI(TAG_T, "Received %d bytes", len);
+        ESP_LOGI(TAG_T, "%x", (unsigned int)rx_buffer);
+
+        if(rx_buffer != ACK) 
+        {
+            ESP_LOGE(TAG_T, "Login failed");
+            break;
+        }
+        //login success
+        /*
+            #ifdef DECODE_COM
+                //get pass
+                strcpy(pasword_iot, "");
+                if( strlen(rx_buffer) >= 4 )
+                {
+                    ptr = &rx_buffer[4];
+                    counter = 0;
+                    while(*ptr != '\0' && *ptr != '\r')
+                    {
+                        pasword_iot[counter] = *ptr;
+                        ptr++;
+                        counter++;
+                        //printf("Char: %x\n", *ptr);
+                    }
+                    pasword_iot[counter] = '\0';
+
+                    //cifrado
+                    aplicarXor(pasword_iot, pasword_iot_desif);
+
+                    ESP_LOGI(TAG_T, "contrasena recibida: %s", pasword_iot);
+                    ESP_LOGI(TAG_T, "contrasena desifrada: %s", pasword_iot_desif);
+                }
+            #endif 
+        */
+
+        //first keep alive
+        build_command(&keep_alive, SERVER_ID, user_tcp, dev_num, KEEP, SERVER);
+        tx_buffer = keep_alive;
+        /*
+            #ifdef DECODE_COM
+                LOCK_MUTEX(tx_buffer_mutex)
+                codeMessage(tx_buffer, pasword_iot_desif);
+                UNLOCK_MUTEX(tx_buffer_mutex)
+            #endif
+        */
+        send(sock, &tx_buffer, sizeof(tx_buffer), 0);
+        ESP_LOGI(TAG_T, "Message send to %s: %x", host, (unsigned int)tx_buffer);
+
+        setTimer();
+
+        //deprecated
+        //xTaskCreate(button_event_task, "button_event_task", 4096, NULL, 4, &button_handle);
+
+        counter_no_ack = 0;
+
+        // Capturar comandos  
+        while(1) 
+        {
+            if(counter_no_ack >= MAX_NO_ACK)
+            {
+                ESP_LOGE(TAG_T, "No keep alive response %d times from host: %s", MAX_NO_ACK, host);
+                break;
+            }
+
+            if(send_ack_f) //patch for ack check
+                send_ack_f++;
+
+            rx_buffer = 0;
+            int len = recv(sock, &rx_buffer, sizeof(rx_buffer), 0);
+            if(len > 0)
+            {
+                /*
+                    #ifdef DECODE_COM
+                        //decode
+                        codeMessage(rx_buffer, pasword_iot_desif);
+                    #endif
+                */
+
+                ESP_LOGI(TAG_T, "Received %d bytes", len);
+                ESP_LOGI(TAG_T, "%x", (unsigned int)rx_buffer);
+
+                if(rx_buffer == ACK) //ACK from keep alive
+                {
+                    ESP_LOGI(TAG_T, "Received acknowledge for keep alive");
+                    send_ack_f = 0;
+                    continue;
+                }
+                if(rx_buffer == NACK)
+                {
+                    //ESP_LOGE(TAG_T, "Conection lost, restarting...");
+                    //break;
+                    ESP_LOGE(TAG_T, "Received NACK");
+                    continue;
+                }
+
+                //initializa array
+                for(int i=1; i<num_elements; i++)
+                    command[i] = 0;
+                
+                //seperate
+                seperate_command(rx_buffer, bit_lengths, num_elements, command);
+
+                //check command
+                if(command[ID_T] == SERVER_ID && command[USER_T] == user_tcp && command[DEV_NUM_T] == dev_num)
+                {
+                    if(command[OPERATION_T] == READ) //LECTURA
+                        handle_read_tcp(command, tx_buffer);
+                        
+                    else if(command[OPERATION_T] == WRITE) //ESCRITURA
+                        handle_write_tcp(command, tx_buffer);
+                        
+                    else
+                        nack_message_tcp(&tx_buffer); 
+                }
+                else
+                    nack_message_tcp(&tx_buffer);
+
+                //vTaskDelay(pdMS_TO_TICKS(50));
+                /*
+                    #ifdef DECODE_COM
+                        LOCK_MUTEX(tx_buffer_mutex)
+                        codeMessage(tx_buffer, pasword_iot_desif);
+                        UNLOCK_MUTEX(tx_buffer_mutex)
+                    #endif
+                */
+                send(sock, &tx_buffer, sizeof(tx_buffer), 0);
+                ESP_LOGI(TAG_T, "Message send to %s: %x", host, (unsigned int)tx_buffer);
+            }
+            else if(send_ack_f>1)
+            {
+                ESP_LOGE(TAG_T, "No message received after keep alive");
+                counter_no_ack++;
+                send_ack_f=0;
+            }
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+    
+        ESP_LOGE(TAG_T, "Stoping timer...");
+        if (xTimerStop(timer1, 0) == pdPASS)
+            xTimerDelete(timer1, 0);
+        else 
+            ESP_LOGE(TAG_T, "Failed to stop timer");
+        break;
+    }
+    ESP_LOGE(TAG_T, "Closing socket...");
+    shutdown(sock, 0);
+    close(sock);
+}
 
 void clock_task(void *pvParameters)
 {
@@ -145,37 +388,20 @@ void vTimerCallback(TimerHandle_t pxTimer)
 	ESP_LOGI(TAG_T, "Timer called");
 
     LOCK_MUTEX(tx_buffer_mutex)
-        sprintf(tx_buffer, keep_alive);
+    tx_buffer = keep_alive;
     UNLOCK_MUTEX(tx_buffer_mutex)
-    #ifdef DECODE_COM
-        LOCK_MUTEX(tx_buffer_mutex)
-        codeMessage(tx_buffer, pasword_iot_desif);
-        UNLOCK_MUTEX(tx_buffer_mutex)
-    #endif
-    send(sock, tx_buffer, strlen(tx_buffer), 0);
-    ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
+    /*
+        #ifdef DECODE_COM
+            LOCK_MUTEX(tx_buffer_mutex)
+            codeMessage(tx_buffer, pasword_iot_desif);
+            UNLOCK_MUTEX(tx_buffer_mutex)
+        #endif
+    */
+    send(sock, &tx_buffer, sizeof(tx_buffer), 0);
+    ESP_LOGI(TAG_T, "Message send to %s: %x", host, (unsigned int)tx_buffer);
 
 	send_ack_f=1;
     
-/*
-    int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, pdMS_TO_TICKS(500));
-    if(len > 0)
-    {
-        rx_buffer[len] = '\0';
-        if(strncmp(rx_buffer, "ACK", 3) == 0) //ACK from keep alive
-            ESP_LOGI(TAG_T, "Received acknowledge in timer callback");
-        else
-        {
-            ESP_LOGE(TAG_T, "No acknowledge in timer callback: %s", rx_buffer);
-            counter_no_ack++;
-        }
-    }
-    else
-    {
-        ESP_LOGE(TAG_T, "No message received in timer callback");
-        counter_no_ack++;
-    }
-    */
 }
 
 void setTimer()
@@ -201,30 +427,6 @@ void button_event_task(void *pvParameters) //evento de boton
     ESP_LOGI(TAG_T, "Starting button event task...");
     while(1)
     {
-       /*
-        //send sms unused or  deprecated
-        current_time = esp_timer_get_time();
-        current_time =+ 60000000; 
-        diff_time = current_time - button_press_time;
-        if(!send_f && edge && diff_time >= 60000000)
-        {
-            send_f++;
-            sprintf(tx_buffer, SEND_MESSAGE);
-            #ifdef DECODE_COM
-                codeMessage(tx_buffer, pasword_iot_desif);
-            #endif
-            //SMS message
-            //send(sock, tx_buffer, strlen(tx_buffer), 0);
-            //ESP_LOGI(TAG_T, "Message send to %s: %s", HOST_TCP, SEND_MESSAGE);
-
-            //Mqtt message
-            //send_mqtt_message();
-
-            button_press_time = esp_timer_get_time();
-        }
-        else if(!edge)
-            send_f = 0;
-       */
         LOCK_MUTEX(edge_mutex)
         //if button pressed
         if(edge)
@@ -235,263 +437,6 @@ void button_event_task(void *pvParameters) //evento de boton
         UNLOCK_MUTEX(edge_mutex)
         vTaskDelay(pdMS_TO_TICKS(20));
     }
-}
-
-void tcp_server_task(void *pvParameters)
-{
-    ESP_LOGI(TAG_T, "Starting tcp server task...");
-
-    tx_buffer_mutex = xSemaphoreCreateMutex();
-    
-    uint8_t local_counter = 0;
-
-    while(1)
-    {
-        ESP_LOGI(TAG_T, "Conecting to iot tcp server...");
-        connect_to_server(pvParameters, HOST_IOT_UABC, PORT_IOT_UABC);
-
-        if(local_counter >= TCP_SERVER_MAX_RETRY)
-            break;
-
-        if(!check_internet_connection())
-        {
-            ESP_LOGE(TAG_T, "Could not validate internet connection.");
-            break;
-        }
-        
-        ESP_LOGW(TAG_T, "Retrying connection to IOT server... Attempt %d/%d", local_counter+1, TCP_SERVER_MAX_RETRY);  
-        local_counter++;
-
-        vTaskDelay(pdMS_TO_TICKS(4000));
-    }
-
-    ESP_LOGW(TAG_T, "Conecting to local tcp server...");
-    connect_to_server(pvParameters, HOST_LOCAL, PORT_LOCAL);
-    
-    ESP_LOGE(TAG_T, "Could not connect to local tcp server.");
-    ESP_LOGE(TAG_T, "TCP task closed.");
-    vTaskDelete(NULL);
-}
-
-void connect_to_server(void *pvParameters, char *host_parameter, int port)
-{
-    sprintf(host, host_parameter);
-
-    struct sockaddr_in dest_addr;
-    int counter_cmmd, counter_word;
-    dest_addr.sin_addr.s_addr = inet_addr(host);
-    dest_addr.sin_family = AF_INET;
-    dest_addr.sin_port = htons(port);
-
-    while(1)
-    {
-        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-        if (sock < 0) {
-            ESP_LOGE(TAG_T, "Unable to create socket: errno %d", errno);
-            break;
-        }
-        ESP_LOGI(TAG_T, "Socket created, connecting to %s:%d", host, port);
-
-        // Set timeout
-        struct timeval timeout;
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
-
-        int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-        if (err != 0) {
-            ESP_LOGE(TAG_T, "Socket unable to connect: errno %d", errno);
-            break;
-        }
-        ESP_LOGI(TAG_T, "Successfully connected to: %s", host);
-
-        //get struct from parameter
-        task_params_t *params = (task_params_t *)pvParameters;
-        char *user_tcp = params->str1;
-        char *dev_num = params->str2;
-
-        ESP_LOGI(TAG_T, "User: %s", user_tcp);
-        ESP_LOGI(TAG_T, "Device number: %s", dev_num);
-
-        
-        build_command(login, SERVER_ID, user_tcp, dev_num, "L", "S", "login_server", "\0");
-        sprintf(tx_buffer, login);
-
-        send(sock, tx_buffer, strlen(tx_buffer), 0);  
-        ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
-
-        int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
-        if(len < 0) 
-        {
-            ESP_LOGE(TAG_T, "Error occurred during receiving: errno %d", errno);
-            break;
-        }
-
-        rx_buffer[len] = '\0'; // terminator
-        ESP_LOGI(TAG_T, "Received %d bytes", len);
-        ESP_LOGI(TAG_T, "%s", rx_buffer);
-
-        if(strncmp(rx_buffer, "ACK", 3) != 0) 
-        {
-            ESP_LOGE(TAG_T, "Login failed");
-            break;
-        }
-        //login success
-        #ifdef DECODE_COM
-            //get pass
-            strcpy(pasword_iot, "");
-            if( strlen(rx_buffer) >= 4 )
-            {
-                ptr = &rx_buffer[4];
-                counter = 0;
-                while(*ptr != '\0' && *ptr != '\r')
-                {
-                    pasword_iot[counter] = *ptr;
-                    ptr++;
-                    counter++;
-                    //printf("Char: %x\n", *ptr);
-                }
-                pasword_iot[counter] = '\0';
-
-                //cifrado
-                aplicarXor(pasword_iot, pasword_iot_desif);
-
-                ESP_LOGI(TAG_T, "contrasena recibida: %s", pasword_iot);
-                ESP_LOGI(TAG_T, "contrasena desifrada: %s", pasword_iot_desif);
-            }
-        #endif 
-        //first keep alive
-        build_command(keep_alive, SERVER_ID, user_tcp, dev_num, "K", "S", "keep_alive", "\0");
-        sprintf(tx_buffer, keep_alive);
-        #ifdef DECODE_COM
-            LOCK_MUTEX(tx_buffer_mutex)
-            codeMessage(tx_buffer, pasword_iot_desif);
-            UNLOCK_MUTEX(tx_buffer_mutex)
-        #endif
-        send(sock, tx_buffer, strlen(tx_buffer), 0);
-        ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
-
-        setTimer();
-
-        //deprecated
-        //xTaskCreate(button_event_task, "button_event_task", 4096, NULL, 4, &button_handle);
-
-        counter_no_ack = 0;
-
-        // Capturar comandos  
-        while(1) 
-        {
-            if(counter_no_ack >= MAX_NO_ACK)
-            {
-                ESP_LOGE(TAG_T, "No keep alive response %d times from host: %s", MAX_NO_ACK, host);
-                break;
-            }
-
-            if(send_ack_f) //patch for ack check
-                send_ack_f++;
-
-            strcpy(rx_buffer, "\0");
-            int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
-            if(len > 0)
-            {
-                rx_buffer[len] = '\0'; 
-                #ifdef DECODE_COM
-                    //decode
-                    codeMessage(rx_buffer, pasword_iot_desif);
-                #endif
-
-                ESP_LOGI(TAG_T, "Received %d bytes", len);
-                ESP_LOGI(TAG_T, "%s", rx_buffer);
-
-                if(strncmp(rx_buffer, "ACK", 3) == 0) //ACK from keep alive
-                {
-                    ESP_LOGI(TAG_T, "Received acknowledge for keep alive");
-                    send_ack_f = 0;
-                    continue;
-                }
-                if(strncmp(rx_buffer, "NACK", 4) == 0)
-                {
-                    //ESP_LOGE(TAG_T, "Conection lost, restarting...");
-                    //break;
-                    ESP_LOGE(TAG_T, "Received NACK");
-                    continue;
-                }
-
-                ptr = rx_buffer;
-                counter_cmmd = 0;
-                counter_word = 0;
-
-                //initialize commands
-                for(int i=0; i<COMMANDS_QUANTITY; i++)
-                    *command[i] = '\0';
-
-                //separate by delimiter
-                while(*ptr != '\0')
-                {
-                    if(*ptr == ':')
-                    {
-                        command[counter_cmmd][counter_word] = '\0'; // terminator
-                        counter_cmmd++;
-                        if(counter_cmmd == COMMANDS_QUANTITY)
-                            continue;
-                        counter_word = 0;
-                    }
-                    else
-                    {
-                        command[counter_cmmd][counter_word] = *ptr;
-                        counter_word++;
-                    }
-                    ptr++;
-                }
-                command[counter_cmmd][counter_word] = '\0';
-
-                //ESP_LOGI(TAG_T,"com: %s %s %s %s %s %s", command[0], command[1], command[2], command[3], command[4], command[5]);
-
-                //check command
-                if(strcmp(command[ID_T], SERVER_ID) == 0 && strcmp(command[USER_T], user_tcp) == 0  && strcmp(command[DEV_NUM_T], dev_num) == 0 )
-                {
-                    if(strcmp(command[OPERATION_T], "R") == 0) //LECTURA
-                        handle_read_tcp(command, tx_buffer);
-                        
-                    else if(strcmp(command[OPERATION_T], "W") == 0) //ESCRITURA
-                        handle_write_tcp(command, tx_buffer);
-                        
-                    else
-                        nack_message_tcp(tx_buffer); 
-                }
-                else
-                    nack_message_tcp(tx_buffer);
-
-                //vTaskDelay(pdMS_TO_TICKS(50));
-                #ifdef DECODE_COM
-                    LOCK_MUTEX(tx_buffer_mutex)
-                    codeMessage(tx_buffer, pasword_iot_desif);
-                    UNLOCK_MUTEX(tx_buffer_mutex)
-                #endif
-                send(sock, tx_buffer, strlen(tx_buffer), 0);
-                ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
-            }
-            else if(send_ack_f>1)
-            {
-                ESP_LOGE(TAG_T, "No message received after keep alive");
-                counter_no_ack++;
-                send_ack_f=0;
-            }
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-    
-        ESP_LOGE(TAG_T, "Stoping timer...");
-        if (xTimerStop(timer1, 0) == pdPASS)
-            xTimerDelete(timer1, 0);
-        else 
-            ESP_LOGE(TAG_T, "Failed to stop timer");
-        //ESP_LOGE(TAG_T, "Deleting button task...");
-        //vTaskDelete(button_handle);
-        break;
-    }
-    ESP_LOGE(TAG_T, "Closing socket...");
-    shutdown(sock, 0);
-    close(sock);
 }
 
 void tcp_time_task(void *pvParameters)
@@ -687,131 +632,107 @@ uint8_t check_internet_connection()
     return connection_f;
 }
 
-void handle_read_tcp(char command[][128], char *tx_buffer)
+void handle_read_tcp(uint16_t command[], uint32_t tx_buffer)
 {
-    char nvs_value[STR_LEN/4] = "NULL", local_buffer[STR_LEN];
+    uint32_t local_buffer;
 
-    if(strcmp(command[ELEMENT_T], "L") == 0)
+    if(command[ELEMENT_T] == LED_HEX)
     {
-        sprintf(local_buffer, "ACK:%d", l_state);
-        message_to_buffer(tx_buffer, local_buffer);
+        local_buffer = add_value_to_ack(ACK, l_state);
+        message_to_buffer(&tx_buffer, local_buffer);
     }
-    else if(strcmp(command[ELEMENT_T], "A") == 0)
+    else if(command[ELEMENT_T] == ADC_HEX)
     {
-        sprintf(local_buffer, "ACK:%d", adc_value);
-        message_to_buffer(tx_buffer, local_buffer);
+        local_buffer = add_value_to_ack(ACK, (uint8_t)adc_value);
+        message_to_buffer(&tx_buffer, local_buffer);
     }
-    else if(strcmp(command[ELEMENT_T], "WIFI") == 0)
+    else if(command[ELEMENT_T] == PWM)
     {
-        read_nvs(key_ssid, nvs_value, sizeof(nvs_value));
-        sprintf(local_buffer, "ACK:%s", nvs_value);
-        message_to_buffer(tx_buffer, local_buffer);
-    }
-    else if(strcmp(command[ELEMENT_T], "PASS") == 0)
-    {
-        read_nvs(key_pass, nvs_value, sizeof(nvs_value));
-        sprintf(local_buffer, "ACK:%s", nvs_value);
-        message_to_buffer(tx_buffer, local_buffer);
-    }
-    else if(strcmp(command[ELEMENT_T], "P") == 0)
-    {
-        uint32_t value_pwm = ledc_get_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-        sprintf(local_buffer, "ACK:%" PRIu32 "", value_pwm);
-        message_to_buffer(tx_buffer, local_buffer);
+        uint32_t value_pwm = ledc_get_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);   
+        local_buffer = add_value_to_ack(ACK, (uint8_t)value_pwm);
+        message_to_buffer(&tx_buffer, local_buffer);
     }
     else
-        nack_message_tcp(tx_buffer);
+        nack_message_tcp(&tx_buffer);
 }
 
-void handle_write_tcp(char command[][128], char *tx_buffer)
+void handle_write_tcp(uint16_t command[], uint32_t tx_buffer)
 {
-    char local_buffer[STR_LEN];
+    uint32_t local_buffer;
 
-    if(strcmp(command[ELEMENT_T], "L") == 0)
+    if(command[ELEMENT_T] == LED_HEX)
     {
-        if(strcmp(command[VALUE_T], "1") == 0)
+        if(command[VALUE_T] == 0x01)
         {
-            sprintf(local_buffer, "ACK");
-            message_to_buffer(tx_buffer, local_buffer);
+            local_buffer = ACK;
+            message_to_buffer(&tx_buffer, local_buffer);
             l_state = 1;
         }
-        else if(strcmp(command[VALUE_T], "0") == 0)
+        else if(command[VALUE_T] == 0x00)
         {
-            sprintf(local_buffer, "ACK");
-            message_to_buffer(tx_buffer, local_buffer);
+            local_buffer = ACK;
+            message_to_buffer(&tx_buffer, local_buffer);
             l_state = 0;
         }
         else
-            nack_message_tcp(tx_buffer);
+            nack_message_tcp(&tx_buffer);
     }
-    else if(strcmp(command[ELEMENT_T], "WIFI") == 0)
+    else if(command[ELEMENT_T] == PWM)
     {
-        write_nvs(key_ssid, command[VALUE_T]);
-        sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
-        message_to_buffer(tx_buffer, local_buffer);
-    }
-    else if(strcmp(command[ELEMENT_T], "PASS") == 0)
-    {
-        write_nvs(key_pass, command[VALUE_T]);
-        sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
-        message_to_buffer(tx_buffer, local_buffer);
-    }
-    else if(strcmp(command[ELEMENT_T], "P") == 0)
-    {
-        if(strcmp(command[VALUE_T], "0") == 0)
+        if(command[VALUE_T] == 0)
         {
             ledc_set_duty(LEDC_HIGH_SPEED_MODE, 
                         LEDC_CHANNEL_0, 
                         (uint32_t)(0)); //0%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
-            message_to_buffer(tx_buffer, local_buffer);
+            local_buffer = add_value_to_ack(ACK, command[VALUE_T]);
+            message_to_buffer(&tx_buffer, local_buffer);
         }
-        else if(strcmp(command[VALUE_T], "25") == 0)
+        else if(command[VALUE_T] == 25)
         {
             ledc_set_duty(LEDC_HIGH_SPEED_MODE, 
                         LEDC_CHANNEL_0, 
                         (uint32_t)(MAX_DUTY_RESOLUTION * 0.25)); //25%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
-            message_to_buffer(tx_buffer, local_buffer);
+            local_buffer = add_value_to_ack(ACK, command[VALUE_T]);
+            message_to_buffer(&tx_buffer, local_buffer);
         }
-        else if(strcmp(command[VALUE_T], "50") == 0)
+        else if(command[VALUE_T] == 50)
         {
             ledc_set_duty(LEDC_HIGH_SPEED_MODE, 
                         LEDC_CHANNEL_0, 
                         (uint32_t)(MAX_DUTY_RESOLUTION * 0.5)); //50%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
-            message_to_buffer(tx_buffer, local_buffer);
+            local_buffer = add_value_to_ack(ACK, command[VALUE_T]);
+            message_to_buffer(&tx_buffer, local_buffer);
         }
-        else if(strcmp(command[VALUE_T], "100") == 0)
+        else if(command[VALUE_T] == 100)
         {
             ledc_set_duty(LEDC_HIGH_SPEED_MODE, 
                         LEDC_CHANNEL_0, 
                         (uint32_t)(MAX_DUTY_RESOLUTION)); //100%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
-            message_to_buffer(tx_buffer, local_buffer);
+            local_buffer = add_value_to_ack(ACK, command[VALUE_T]);
+            message_to_buffer(&tx_buffer, local_buffer);
         }
         else
-        nack_message_tcp(tx_buffer);
+        nack_message_tcp(&tx_buffer);
     }
     else
-        nack_message_tcp(tx_buffer);
+        nack_message_tcp(&tx_buffer);
 }
 
-void message_to_buffer(char *buffer, char *message)
+void message_to_buffer(uint32_t *buffer, uint32_t message)
 {
     LOCK_MUTEX(tx_buffer_mutex)
-    sprintf(buffer, message);
+    *buffer = message;
     UNLOCK_MUTEX(tx_buffer_mutex)
 }
 
-void nack_message_tcp(char *buffer)
+void nack_message_tcp(uint32_t *buffer)
 {
     LOCK_MUTEX(tx_buffer_mutex)
-    sprintf(buffer, "NACK");
+    *buffer = NACK;
     UNLOCK_MUTEX(tx_buffer_mutex)
 }
 
@@ -837,25 +758,52 @@ void codeMessage(char *message, char *password)
     }
 }
 
-void build_command(char *string_com, ...)
+void build_command(uint32_t *comm, ...)
 {
-    strcpy(string_com, "\0");
+    *comm = 0;
 
     va_list args;
-    va_start(args, string_com);
-    char str_temp[STR_LEN];
+    va_start(args, comm);
 
-    for(int i=0; i<COMMANDS_QUANTITY; i++)
+    for(int i=0; i<num_elements; i++)
     {
-        sprintf(str_temp, va_arg(args, char *));
-        if(!strcmp(str_temp, "\0")) //if last argument
-        {
-            string_com[strlen(string_com) - 1] = '\0';
-            break;
-        }
+        uint16_t bits = va_arg(args, int) & bit_lengths[i]; 
+        printf("%16X\n", bits);
 
-        strcat(string_com, str_temp);
-        strcat(string_com, ":");
+        *comm = (*comm << bit_lengths[i]) | bits;
+        printf("com: %X\n", (unsigned int)*comm);
     }
     va_end(args);
+}
+
+void seperate_command(uint16_t input, uint8_t bit_lengths[], size_t num_lengths, uint16_t command[]) {
+    int current_bit = 0; 
+
+    for (int i = 0; i < num_lengths; i++) {
+        uint8_t length = bit_lengths[i];
+
+        uint16_t mask = (1 << length) - 1;
+
+        command[i] = (input >> current_bit) & mask;
+
+        printf("\ncom: %x\n", command[i]);
+
+        current_bit += length;
+
+        if (current_bit > 16) {
+            ESP_LOGE(TAG_T, "Lenght exceeds 16 bits");
+            return;
+        }
+    }
+}
+
+uint32_t add_value_to_ack(uint8_t ack, uint16_t val) {
+    uint32_t result = ack;
+    result <<= VALUE_BIT_LEN;        
+
+    uint16_t top_3_bits = val  & (~(0xffffffff << VALUE_BIT_LEN));
+
+    result |= top_3_bits;
+
+    return result;
 }

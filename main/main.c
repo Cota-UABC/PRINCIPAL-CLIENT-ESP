@@ -31,19 +31,19 @@ const char *TAG_MAIN = "MAIN";
 TaskHandle_t get_button_handle = NULL;
 
 //nvs
-char ssid[STR_LEN] = "\0", pass[STR_LEN] = "\0", dev_name[STR_LEN] = "esp_default_name", user[STR_LEN] = "\0", dev_num[STR_LEN] = "\0";
-uint8_t valid_f = 0;
+char ssid[STR_LEN] = "\0", pass[STR_LEN] = "\0", dev_name[STR_LEN] = "esp_default_name";
+uint8_t valid_f = 0, user, dev_num;
 
 typedef struct 
 {
-    char *str1;
-    char *str2;
-    char *str3;
+    uint8_t user;
+    uint8_t dev;
+    uint8_t dummy;
 } task_params_t;
 
 task_params_t params;
 
-int validate_read_nvs_values(char *ssid, char *pass, char *dev_name, char *user, char *dev_num);
+int validate_read_nvs_values(char *ssid, char *pass, char *dev_name, uint8_t *user, uint8_t *dev_num);
 
 void activate_access_point();
 
@@ -64,7 +64,7 @@ void app_main(void)
     xTaskCreate(get_button_task, "get_button_task", 4096, NULL, 4, NULL);
 
     //validate flash values
-    valid_f = validate_read_nvs_values(ssid, pass, dev_name, user, dev_num);
+    valid_f = validate_read_nvs_values(ssid, pass, dev_name, &user, &dev_num);
 
     ap_or_station_mode(valid_f);
     tcp_or_udp(ip_flag);
@@ -88,7 +88,7 @@ void app_main(void)
     }
 }
 
-int validate_read_nvs_values(char *ssid, char *pass, char *dev_name, char *user, char *dev_num)
+int validate_read_nvs_values(char *ssid, char *pass, char *dev_name, uint8_t *user, uint8_t *dev_num)
 {
     uint8_t valid_f = 0;
 
@@ -97,8 +97,8 @@ int validate_read_nvs_values(char *ssid, char *pass, char *dev_name, char *user,
     read_nvs((char *)key_pass, pass, STR_LEN); //can be blank for no password
 
     if(!(read_nvs((char *)key_ssid, ssid, STR_LEN) ==  ESP_ERR_NVS_NOT_FOUND || 
-        read_nvs((char *)key_user, user, STR_LEN) == ESP_ERR_NVS_NOT_FOUND ||
-        read_nvs((char *)key_dev_num, dev_num, STR_LEN) == ESP_ERR_NVS_NOT_FOUND || 
+        read_nvs_uint8((char *)key_user, user) == ESP_ERR_NVS_NOT_FOUND ||
+        read_nvs_uint8((char *)key_dev_num, dev_num) == ESP_ERR_NVS_NOT_FOUND || 
         strcmp(ssid, "RESET") == 0))
         valid_f = 1;
 
@@ -149,12 +149,12 @@ void tcp_or_udp(uint8_t ip_flag)
         xTaskCreate(clock_task, "clock_task", 4096, NULL, 5, NULL);
 
         #ifdef CONNECT_TO_SERVER
-            params.str1 = user;
-            params.str2 = dev_num;
-            params.str3 = "\0";
-            
-            //printf("param str: %s", params.str1);
-            xTaskCreate(tcp_server_task, "tcp_server_task", 8192, &params, 5, &tcp_server_handle);
+            params.user = user;
+            params.dev = dev_num;
+            params.dummy = 0;
+
+            //printf("param str: %u", params.user);
+            xTaskCreate(tcp_server_task, "tcp_server_task", 16384, &params, 5, &tcp_server_handle);
         #endif
 
         //mqtt_app_start();

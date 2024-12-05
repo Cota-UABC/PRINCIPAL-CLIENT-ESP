@@ -127,6 +127,7 @@ void udp_server_task(void *pvParameters)
 void handleRead(char command[][128], char *tx_buffer)
 {
     char str[STRING_LENGHT] = "NULL";
+    uint8_t local_uint = 0xff;
 
     if(strcmp(command[ELEMENT], "L") == 0)
         sprintf(tx_buffer, "ACK:%d", l_state);
@@ -149,14 +150,13 @@ void handleRead(char command[][128], char *tx_buffer)
     }
     else if(strcmp(command[ELEMENT], "USER") == 0)
     {
-        read_nvs((char *)key_user, str, sizeof(str));
-        sprintf(tx_buffer, "ACK:%s", str);
+        read_nvs_uint8((char *)key_user, &local_uint);
+        sprintf(tx_buffer, "ACK:%u", local_uint);
     }
-    
     else if(strcmp(command[ELEMENT], "DEV_NUM") == 0)
     {
-        read_nvs((char *)key_dev_num, str, sizeof(str));
-        sprintf(tx_buffer, "ACK:%s", str);
+        read_nvs_uint8((char *)key_dev_num, &local_uint);
+        sprintf(tx_buffer, "ACK:%u", local_uint);
     }
     else if(strcmp(command[ELEMENT], "IP") == 0)
         sprintf(tx_buffer, "ACK:%s", ip_addr);
@@ -171,6 +171,8 @@ void handleRead(char command[][128], char *tx_buffer)
 
 void handleWrite(char command[][128], char *tx_buffer)
 {
+    uint8_t local_uint = 0xff;
+
     if(strcmp(command[ELEMENT], "L") == 0)
     {
         if(strcmp(command[VALUE], "1") == 0)
@@ -204,13 +206,15 @@ void handleWrite(char command[][128], char *tx_buffer)
     }
     else if(strcmp(command[ELEMENT], "USER") == 0)
     {
-        write_nvs((char *)key_user, command[VALUE]);
-        sprintf(tx_buffer, "ACK:%s", command[VALUE]);
+        local_uint = string_to_uint8(command[VALUE]);
+        write_nvs_uint8((char *)key_user, local_uint);
+        sprintf(tx_buffer, "ACK:%u", local_uint);
     }
     else if(strcmp(command[ELEMENT], "DEV_NUM") == 0)
     {
-        write_nvs((char *)key_dev_num, command[VALUE]);
-        sprintf(tx_buffer, "ACK:%s", command[VALUE]);
+        local_uint = string_to_uint8(command[VALUE]);
+        write_nvs_uint8((char *)key_dev_num, local_uint);
+        sprintf(tx_buffer, "ACK:%u", local_uint);
     }
     else if(strcmp(command[ELEMENT], "P") == 0)
     {
