@@ -45,7 +45,7 @@
 #define TIMER_RESET 7000 //miliseconds
 
 #define STR_LEN 128
-#define COMMANDS_QUANTITY 10
+#define COMMAND_QUANTITY 10
 
 #ifdef NORMAL_COM
 #define PORT_IOT_UABC 8876
@@ -67,17 +67,20 @@
 #define PORT_GOOGLE 80
 #define HOST_GOOGLE "142.250.188.14" //Google
 
+//unsused
+//#define SEND_MESSAGE "UABC:BCR:X:X:test"
+//#define SEND_MESSAGE "UABC:BCR:M:S:6644871544:Hola_desde_esp"
+
 #define SERVER_ID "UABC"
 
 //command parts
 #define ID_T 0
-#define ID_PCK 1
-#define USER_T 2
-#define DEV_NUM_T 3
-#define OPERATION_T 4
-#define ELEMENT_T 5
-#define VALUE_T 6
-#define COMMENT_T 7
+#define USER_T 1
+#define DEV_NUM_T 2
+#define OPERATION_T 3
+#define ELEMENT_T 4
+#define VALUE_T 5
+#define COMMENT_T 6
 
 #define TIME_STRING_LEN 16
 
@@ -93,8 +96,9 @@ extern TaskHandle_t button_handle;
 
 //extern char user_tcp[STR_LEN];
 
-extern char rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN],
-    pasword_iot[50], pasword_iot_desif[50], login[STR_LEN], keep_alive[STR_LEN], time_api_message[STR_LEN];
+extern char host[30], *ptr, pasword_iot[50], pasword_iot_desif[50],time_api_message[STR_LEN];
+extern uint16_t command[COMMAND_QUANTITY];
+extern uint32_t tx_buffer, rx_buffer, login, keep_alive;
 
 extern uint8_t id_pck;
 extern char id_pck_str[STR_LEN];
@@ -128,17 +132,18 @@ extern SemaphoreHandle_t real_time_key, check_time_key;
 
 extern uint16_t counter, counter_no_ack;
 
-//main connection to iot server
+
+void clock_task(void *pvParameters);
+
+void check_time_offset_task(void *pvParameters);
+
+void vTimerCallback(TimerHandle_t pxTimer);
+
+void setTimer();
+
 void tcp_server_task(void *pvParameters);
 
-void interact_with_server(void *pvParameters, char *host_parameter, int port);
-
-void callback_keep_alive(TimerHandle_t pxTimer);
-
-void setTimerKeepAlive();
-
-//connection to time api 
-void clock_task(void *pvParameters);
+void connect_to_server(void *pvParameters, char *host_parameter, int port);
 
 void tcp_real_time_task(void *pvParameters);
 
@@ -152,21 +157,18 @@ uint8_t check_internet_connection();
 //tcp exclusive button events
 void button_tcp_event_task(void *pvParameters);
 
-//iot server functions
-void handle_read_tcp(char command[][128], char *tx_buffer, char second_flow_id_pck[128]);
+void handle_read_tcp(char command[][128], char *tx_buffer);
 
-void handle_write_tcp(char command[][128], char *tx_buffer, char second_flow_id_pck[128]);
+void handle_write_tcp(char command[][128], char *tx_buffer);
 
-void message_to_buffer(char *buffer, char *message);
+void message_to_buffer(uint32_t *buffer, uint32_t message);
 
-void nack_message_tcp(char *buffer);
+void nack_message_tcp(uint32_t *buffer);
 
 void aplicarXor(char *original_message, char *mensaje_cifrado);
 
 void codeMessage(char *message, char *password);
 
 void build_command(char *string_com, ...);
-
-void increment_id_packet();
 
 #endif

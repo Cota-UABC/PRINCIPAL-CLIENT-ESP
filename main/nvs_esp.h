@@ -13,6 +13,10 @@ esp_err_t init_nvs();
 
 esp_err_t read_nvs(char *key, char *value, size_t len);
 
+esp_err_t read_nvs_uint8(char *key, uint8_t *value);
+
 esp_err_t write_nvs(char *key, char *value);
+
+esp_err_t write_nvs_uint8(char *key, uint8_t value);
 
 #endif
