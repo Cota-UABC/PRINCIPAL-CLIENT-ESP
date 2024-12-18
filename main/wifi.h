@@ -11,12 +11,14 @@
 #include "esp_http_client.h"
 #include "esp_event.h"
 #include "esp_system.h"
+#include "freertos/semphr.h"
 
 #include <string.h>
 
 #include "nvs_flash.h"
 #include "ping/ping_sock.h"
 
+#include "macros.h"
 #include "host_name.h"
 #include "nvs_esp.h"
 
@@ -24,10 +26,10 @@
 #define IP_LENGHT 50
 
 extern const char *TAG_W;
-extern uint8_t connected_w;
 
 extern esp_netif_ip_info_t ip_info;
 
+extern SemaphoreHandle_t ip_mutex;
 extern uint8_t ip_flag;
 
 extern char ip_addr[IP_LENGHT];

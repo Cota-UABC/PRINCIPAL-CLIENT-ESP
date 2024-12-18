@@ -1,7 +1,6 @@
 #include "wifi.h"
 
 const char *TAG_W = "WIFI";
-uint8_t connected_w = 0;
 
 static int retry_count = 0;
 
@@ -9,8 +8,10 @@ esp_netif_ip_info_t ip_info;
 
 char ip_addr[IP_LENGHT] = "\0";
 
-uint8_t ip_flag;
+SemaphoreHandle_t ip_mutex = 0;
+uint8_t ip_flag=0;
 
+//for fast testing
 #define MANUAL_SSID_PASS
 
 #define SSID "Totalplay-2.4G-b518"
@@ -38,10 +39,12 @@ void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_base, in
         break;
     case WIFI_EVENT_STA_CONNECTED:
         ESP_LOGI(TAG_W,"WiFi connected WIFI_EVENT_STA_CONNECTED ...");
-        connected_w=1;
         retry_count = 0;
         break;
     case WIFI_EVENT_STA_DISCONNECTED:
+        LOCK_MUTEX(ip_mutex)
+            ip_flag=0;
+        UNLOCK_MUTEX(ip_mutex)
         if(retry_count < MAX_RETRY)
         {
             ESP_LOGE(TAG_W, "WiFi lost connection WIFI_EVENT_STA_DISCONNECTED. Retrying ... Attempt %d/%d", retry_count + 1, MAX_RETRY);
@@ -53,9 +56,10 @@ void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_base, in
             esp_wifi_stop();
             esp_wifi_deinit();
             ESP_LOGE(TAG_W,"WiFi stopped.");
-            connected_w=0xff;
+            LOCK_MUTEX(ip_mutex)
+                ip_flag=0xff;
+            UNLOCK_MUTEX(ip_mutex)
         }
-        //ESP_LOGE(TAG_W, "WiFi lost connection WIFI_EVENT_STA_DISCONNECTED");
         break;
     case IP_EVENT_STA_GOT_IP:
         ESP_LOGI(TAG_W,"WiFi got IP");
@@ -64,14 +68,19 @@ void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_base, in
         esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
         esp_netif_get_ip_info(netif, &ip_info);
         snprintf(ip_addr, IP_LENGHT, "%d.%d.%d.%d", IP2STR(&ip_info.ip));
-        ip_flag = 1;
+        LOCK_MUTEX(ip_mutex)
+            ip_flag = 1;
+        UNLOCK_MUTEX(ip_mutex)
         break;
     }
 }
 
 void wifi_connection(char *ssid, char *pass, char *dev_name)
 {
-    ip_flag = 0;
+    LOCK_MUTEX(ip_mutex)
+        ip_flag = 0;
+    UNLOCK_MUTEX(ip_mutex)
+
     esp_err_t error = nvs_flash_init();
     if(error == ESP_ERR_NVS_NO_FREE_PAGES || error == ESP_ERR_NVS_NEW_VERSION_FOUND) 
     {

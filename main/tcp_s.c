@@ -11,12 +11,17 @@ static const char *TAG_T_CLOCK = "TCP_CLOCK";
 TaskHandle_t tcp_server_handle = NULL;
 TaskHandle_t button_handle = NULL;
 
-//char user_tcp[STR_LEN];
 
 char host[30], rx_buffer[STR_LEN], tx_buffer[STR_LEN], *ptr, command[COMMANDS_QUANTITY][STR_LEN], 
     pasword_iot[50], pasword_iot_desif[50], login[STR_LEN], keep_alive[STR_LEN], time_api_message[STR_LEN];
 
-SemaphoreHandle_t tx_buffer_mutex = 0;
+SemaphoreHandle_t tx_buffer_mutex = 0, id_pck_mutex = 0;
+
+uint8_t id_pck = 0;
+char id_pck_str[STR_LEN];
+
+char user_tcp[STR_LEN];
+char dev_num_tcp[STR_LEN];
 
 //---BUTTON---
 uint8_t send_f = 0;
@@ -38,213 +43,18 @@ typedef struct {
     char *str3;
 } task_params_t;
 
-//patch
 void build_command(char *string_com, ...);
 
-void clock_task(void *pvParameters)
-{
-    real_time_key = xSemaphoreCreateBinary();
-
-    xTaskCreate(tcp_time_task, "tcp_time_task", 4096, NULL, 5, NULL);
-    xSemaphoreGive(real_time_key);
-
-    #ifdef CHECK_TIME_OFFSET
-    xTaskCreate(check_time_offset_task, "check_time_offset_task", 4096, NULL, 5, NULL);
-    #endif
-
-    //wait to get real time
-    while(seconds_true>60)
-        vTaskDelay(pdMS_TO_TICKS(100));
-    
-    if(hours_true>24)
-    {
-        ESP_LOGE(TAG_T_CLOCK, "Could not get real time. Set to 00:00:00");
-        hours = 0;
-        minutes = 0;
-        seconds = 0;
-    }
-    else
-    {
-        ESP_LOGI(TAG_T_CLOCK, "Succesfully got real time.");
-        hours = hours_true;
-        minutes = minutes_true;
-        seconds = seconds_true;
-    }
-    seconds_true = 0xffff;
-
-    uint16_t internal_timer = 0;
-
-    ESP_LOGI(TAG_T_CLOCK, "Starting local clock...");
-    while(1)
-    {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        
-        seconds++;
-        internal_timer++;
-        if(seconds == 60)
-        {
-            seconds=0;
-            minutes++;
-            if(minutes == 60) 
-            {
-                minutes=0;
-                hours++;
-                if(hours == 24)
-                    hours=0;
-            }
-        }
-        #ifdef PRINT_TIME
-        ESP_LOGI(TAG_T_CLOCK, "ESP local time: %d:%d:%d", hours, minutes, seconds);
-        #endif
-
-        //check offset every certain minutes
-        #ifdef CHECK_TIME_OFFSET
-        if(!(internal_timer % (60*CLOCK_MIN_TO_CHECK)))
-        {
-            xSemaphoreGive(real_time_key);
-            xSemaphoreGive(check_time_key);
-        }
-
-        #endif
-    }
-    vSemaphoreDelete(real_time_key);
-    ESP_LOGW(TAG_T, "Clock task closed.");
-    vTaskDelete(NULL);
-}
-
-void check_time_offset_task(void *pvParameters)
-{
-    ESP_LOGI(TAG_T_CLOCK, "Starting time offset task...");
-    check_time_key = xSemaphoreCreateBinary();
-
-    while(1)
-    {
-        if(xSemaphoreTake(check_time_key, portMAX_DELAY))
-        {
-            ESP_LOGW(TAG_T_CLOCK, "Waiting to get real time...");
-            while(seconds_true>60)
-                vTaskDelay(pdMS_TO_TICKS(30));
-            if(hours_true<24)
-            {
-                int dif_h = hours - hours_true;
-                int dif_m = minutes - minutes_true;
-                int dif_s = seconds - seconds_true;
-                ESP_LOGW(TAG_T_CLOCK, "Offset by %d:%d:%d", dif_h,dif_m,dif_s);
-            }
-            else
-                ESP_LOGE(TAG_T_CLOCK, "Could not get real time to check offset.");
-            seconds_true = 0xffff;
-        }
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-    vSemaphoreDelete(check_time_key);
-}
-
-void vTimerCallback(TimerHandle_t pxTimer)
-{
-	ESP_LOGI(TAG_T, "Timer called");
-
-    LOCK_MUTEX(tx_buffer_mutex)
-        sprintf(tx_buffer, keep_alive);
-    UNLOCK_MUTEX(tx_buffer_mutex)
-    #ifdef DECODE_COM
-        LOCK_MUTEX(tx_buffer_mutex)
-        codeMessage(tx_buffer, pasword_iot_desif);
-        UNLOCK_MUTEX(tx_buffer_mutex)
-    #endif
-    send(sock, tx_buffer, strlen(tx_buffer), 0);
-    ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
-
-	send_ack_f=1;
-    
-/*
-    int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, pdMS_TO_TICKS(500));
-    if(len > 0)
-    {
-        rx_buffer[len] = '\0';
-        if(strncmp(rx_buffer, "ACK", 3) == 0) //ACK from keep alive
-            ESP_LOGI(TAG_T, "Received acknowledge in timer callback");
-        else
-        {
-            ESP_LOGE(TAG_T, "No acknowledge in timer callback: %s", rx_buffer);
-            counter_no_ack++;
-        }
-    }
-    else
-    {
-        ESP_LOGE(TAG_T, "No message received in timer callback");
-        counter_no_ack++;
-    }
-    */
-}
-
-void setTimer()
-{
-	ESP_LOGI(TAG_T, "Timer initialized");
-	timer1 = xTimerCreate("timer",
-                        (pdMS_TO_TICKS(TIMER_RESET)),
-                        pdTRUE,
-                        (void *)timerId,
-                        vTimerCallback);
-
-	if(timer1 == NULL)
-		ESP_LOGE(TAG_T, "Timer not created");
-	else
-	{
-		if( xTimerStart(timer1, 0) != pdPASS)
-			ESP_LOGI(TAG_T, "Timer could not be set to Active state");
-	}
-}
-
-void button_event_task(void *pvParameters) //evento de boton
-{
-    ESP_LOGI(TAG_T, "Starting button event task...");
-    while(1)
-    {
-       /*
-        //send sms unused or  deprecated
-        current_time = esp_timer_get_time();
-        current_time =+ 60000000; 
-        diff_time = current_time - button_press_time;
-        if(!send_f && edge && diff_time >= 60000000)
-        {
-            send_f++;
-            sprintf(tx_buffer, SEND_MESSAGE);
-            #ifdef DECODE_COM
-                codeMessage(tx_buffer, pasword_iot_desif);
-            #endif
-            //SMS message
-            //send(sock, tx_buffer, strlen(tx_buffer), 0);
-            //ESP_LOGI(TAG_T, "Message send to %s: %s", HOST_TCP, SEND_MESSAGE);
-
-            //Mqtt message
-            //send_mqtt_message();
-
-            button_press_time = esp_timer_get_time();
-        }
-        else if(!edge)
-            send_f = 0;
-       */
-        LOCK_MUTEX(edge_mutex)
-        //if button pressed
-        if(edge)
-        {
-            ESP_LOGI(TAG_T, "ESP local time: %d:%d:%d", hours, minutes, seconds);
-            edge = 0;
-        }
-        UNLOCK_MUTEX(edge_mutex)
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-}
-
+//main connection to iot server
 void tcp_server_task(void *pvParameters)
 {
     ESP_LOGI(TAG_T, "Starting tcp server task...");
 
     tx_buffer_mutex = xSemaphoreCreateMutex();
+    id_pck_mutex = xSemaphoreCreateMutex();
     
     uint8_t local_counter = 0;
-
+    
     while(1)
     {
         ESP_LOGI(TAG_T, "Conecting to iot tcp server...");
@@ -264,6 +74,7 @@ void tcp_server_task(void *pvParameters)
 
         vTaskDelay(pdMS_TO_TICKS(4000));
     }
+    
 
     ESP_LOGW(TAG_T, "Conecting to local tcp server...");
     connect_to_server(pvParameters, HOST_LOCAL, PORT_LOCAL);
@@ -273,7 +84,7 @@ void tcp_server_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-void connect_to_server(void *pvParameters, char *host_parameter, int port)
+void interact_with_server(void *pvParameters, char *host_parameter, int port)
 {
     sprintf(host, host_parameter);
 
@@ -307,17 +118,19 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
 
         //get struct from parameter
         task_params_t *params = (task_params_t *)pvParameters;
-        char *user_tcp = params->str1;
-        char *dev_num = params->str2;
+        sprintf(user_tcp, params->str1);
+        sprintf(dev_num_tcp, params->str2);
 
         ESP_LOGI(TAG_T, "User: %s", user_tcp);
-        ESP_LOGI(TAG_T, "Device number: %s", dev_num);
+        ESP_LOGI(TAG_T, "Device number: %s", dev_num_tcp);
 
-        
-        build_command(login, SERVER_ID, user_tcp, dev_num, "L", "S", "login_server", "\0");
+        //login
+        increment_id_packet();
+        sprintf(id_pck_str, "%u", id_pck);
+        build_command(login, SERVER_ID, id_pck_str, user_tcp, dev_num_tcp, "L", "S", "login_server", "\0");
         sprintf(tx_buffer, login);
 
-        send(sock, tx_buffer, strlen(tx_buffer), 0);  
+        send(sock, tx_buffer, strlen(tx_buffer), 0); 
         ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
 
         int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
@@ -331,11 +144,13 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
         ESP_LOGI(TAG_T, "Received %d bytes", len);
         ESP_LOGI(TAG_T, "%s", rx_buffer);
 
-        if(strncmp(rx_buffer, "ACK", 3) != 0) 
+        
+        if(strncmp(rx_buffer, "ACK:", ACK_LEN+1) != 0 && strncmp(rx_buffer+ACK_LEN+1, id_pck_str, strlen(id_pck_str)) != 0) 
         {
             ESP_LOGE(TAG_T, "Login failed");
             break;
-        }
+        } 
+
         //login success
         #ifdef DECODE_COM
             //get pass
@@ -360,23 +175,25 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
                 ESP_LOGI(TAG_T, "contrasena desifrada: %s", pasword_iot_desif);
             }
         #endif 
+
         //first keep alive
-        build_command(keep_alive, SERVER_ID, user_tcp, dev_num, "K", "S", "keep_alive", "\0");
+        increment_id_packet();
+        sprintf(id_pck_str, "%u", id_pck);
+        build_command(keep_alive, SERVER_ID, id_pck_str, user_tcp, dev_num_tcp, "K", "S", "keep_alive", "\0");
         sprintf(tx_buffer, keep_alive);
         #ifdef DECODE_COM
             LOCK_MUTEX(tx_buffer_mutex)
             codeMessage(tx_buffer, pasword_iot_desif);
             UNLOCK_MUTEX(tx_buffer_mutex)
         #endif
-        send(sock, tx_buffer, strlen(tx_buffer), 0);
+        send(sock, tx_buffer, strlen(tx_buffer), 0); 
         ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
 
-        setTimer();
-
-        //deprecated
-        //xTaskCreate(button_event_task, "button_event_task", 4096, NULL, 4, &button_handle);
+        setTimerKeepAlive();
 
         counter_no_ack = 0;
+
+        char second_flow_id_pck[STR_LEN];
 
         // Capturar comandos  
         while(1) 
@@ -387,7 +204,7 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
                 break;
             }
 
-            if(send_ack_f) //patch for ack check
+            if(send_ack_f) //for ack check
                 send_ack_f++;
 
             strcpy(rx_buffer, "\0");
@@ -403,16 +220,23 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
                 ESP_LOGI(TAG_T, "Received %d bytes", len);
                 ESP_LOGI(TAG_T, "%s", rx_buffer);
 
-                if(strncmp(rx_buffer, "ACK", 3) == 0) //ACK from keep alive
+                if(strncmp(rx_buffer, "ACK:", ACK_LEN+1) == 0) 
                 {
-                    ESP_LOGI(TAG_T, "Received acknowledge for keep alive");
-                    send_ack_f = 0;
-                    continue;
+                    if(strncmp(rx_buffer+ACK_LEN+1, id_pck_str, strlen(id_pck_str)) == 0)    
+                    {   
+                        ESP_LOGI(TAG_T, "Received acknowledge for keep alive with correct id pack: %s", id_pck_str);
+                        send_ack_f = 0;
+                        continue;
+                    }
+                    else
+                    {
+                        ESP_LOGE(TAG_T, "Incorrect id pack for keep alive: %s", id_pck_str);
+                        break;
+                    }
+                    
                 }
                 if(strncmp(rx_buffer, "NACK", 4) == 0)
                 {
-                    //ESP_LOGE(TAG_T, "Conection lost, restarting...");
-                    //break;
                     ESP_LOGE(TAG_T, "Received NACK");
                     continue;
                 }
@@ -447,15 +271,41 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
 
                 //ESP_LOGI(TAG_T,"com: %s %s %s %s %s %s", command[0], command[1], command[2], command[3], command[4], command[5]);
 
+                strcpy(second_flow_id_pck, command[ID_PCK]);
+                ESP_LOGW(TAG_T, "Recieved id packet from second message flow: %s", second_flow_id_pck);
+
                 //check command
-                if(strcmp(command[ID_T], SERVER_ID) == 0 && strcmp(command[USER_T], user_tcp) == 0  && strcmp(command[DEV_NUM_T], dev_num) == 0 )
+                if(strcmp(command[ID_T], SERVER_ID) == 0 
+                    && strcmp(command[USER_T], user_tcp) == 0  
+                    && strcmp(command[DEV_NUM_T], dev_num_tcp) == 0 )
                 {
                     if(strcmp(command[OPERATION_T], "R") == 0) //LECTURA
-                        handle_read_tcp(command, tx_buffer);
-                        
+                        handle_read_tcp(command, tx_buffer, second_flow_id_pck);
+
                     else if(strcmp(command[OPERATION_T], "W") == 0) //ESCRITURA
-                        handle_write_tcp(command, tx_buffer);
-                        
+                        handle_write_tcp(command, tx_buffer, second_flow_id_pck);
+
+                    else if(strcmp(command[OPERATION_T], "X") == 0) //RESET
+                    {
+                        char local_buffer[STR_LEN+5];
+
+                        sprintf(local_buffer, "ACK:%s", second_flow_id_pck);
+                        send(sock, tx_buffer, strlen(tx_buffer), 0);
+                        ESP_LOGW(TAG_T, "Restarting device...");
+                        vTaskDelay(pdMS_TO_TICKS(5000));
+                        esp_restart();
+                    }
+                    else if(strcmp(command[OPERATION_T], "F") == 0) //FACTORY RESET
+                    {
+                        char local_buffer[STR_LEN+5];
+
+                        sprintf(local_buffer, "ACK:%s", second_flow_id_pck);
+                        send(sock, tx_buffer, strlen(tx_buffer), 0);
+                        ESP_LOGW(TAG_T, "Restarting device...");
+                        vTaskDelay(pdMS_TO_TICKS(5000));
+                        //FLUSH NVS VALUES
+                        esp_restart();
+                    }   
                     else
                         nack_message_tcp(tx_buffer); 
                 }
@@ -485,8 +335,6 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
             xTimerDelete(timer1, 0);
         else 
             ESP_LOGE(TAG_T, "Failed to stop timer");
-        //ESP_LOGE(TAG_T, "Deleting button task...");
-        //vTaskDelete(button_handle);
         break;
     }
     ESP_LOGE(TAG_T, "Closing socket...");
@@ -494,7 +342,119 @@ void connect_to_server(void *pvParameters, char *host_parameter, int port)
     close(sock);
 }
 
-void tcp_time_task(void *pvParameters)
+void callback_keep_alive(TimerHandle_t pxTimer)
+{
+	ESP_LOGI(TAG_T, "Timer called");
+
+    LOCK_MUTEX(tx_buffer_mutex)
+        increment_id_packet();
+        sprintf(id_pck_str, "%u", id_pck);
+        build_command(keep_alive, SERVER_ID, id_pck_str, user_tcp, dev_num_tcp, "K", "S", "keep_alive", "\0");
+        sprintf(tx_buffer, keep_alive);
+    UNLOCK_MUTEX(tx_buffer_mutex)
+    #ifdef DECODE_COM
+        LOCK_MUTEX(tx_buffer_mutex)
+        codeMessage(tx_buffer, pasword_iot_desif);
+        UNLOCK_MUTEX(tx_buffer_mutex)
+    #endif
+    send(sock, tx_buffer, strlen(tx_buffer), 0);
+    ESP_LOGI(TAG_T, "Message send to %s: %s", host, tx_buffer);
+
+	send_ack_f=1;
+}
+
+void setTimerKeepalieve()
+{
+	ESP_LOGI(TAG_T, "Timer initialized");
+	timer1 = xTimerCreate("timer",
+                        (pdMS_TO_TICKS(TIMER_RESET)),
+                        pdTRUE,
+                        (void *)timerId,
+                        callback_keep_alive);
+
+	if(timer1 == NULL)
+		ESP_LOGE(TAG_T, "Timer not created");
+	else
+	{
+		if( xTimerStart(timer1, 0) != pdPASS)
+			ESP_LOGI(TAG_T, "Timer could not be set to Active state");
+	}
+}
+
+//connection to time api 
+void clock_task(void *pvParameters)
+{
+    real_time_key = xSemaphoreCreateBinary();
+
+    xTaskCreate(tcp_real_time_task, "tcp_real_time_task", 4096, NULL, 5, NULL);
+    xSemaphoreGive(real_time_key); //get real time semaphore 
+
+    #ifdef CHECK_TIME_OFFSET
+    xTaskCreate(check_time_offset_task, "check_time_offset_task", 4096, NULL, 5, NULL);
+    #endif
+
+    //wait to get real time
+    while(seconds_true>60)
+        vTaskDelay(pdMS_TO_TICKS(100));
+    
+    //if hour not valid
+    if(hours_true>24)
+    {
+        ESP_LOGE(TAG_T_CLOCK, "Could not get real time. Set to 00:00:00");
+        hours = 0;
+        minutes = 0;
+        seconds = 0;
+    }
+    else
+    {
+        ESP_LOGI(TAG_T_CLOCK, "Succesfully got real time.");
+        hours = hours_true;
+        minutes = minutes_true;
+        seconds = seconds_true;
+    }
+    seconds_true = 0xffff; //for next check on real time
+
+    uint16_t internal_timer = 0;
+
+    ESP_LOGI(TAG_T_CLOCK, "Starting local clock...");
+    while(1)
+    {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        
+        seconds++;
+        internal_timer++;
+        if(seconds == 60)
+        {
+            seconds=0;
+            minutes++;
+            if(minutes == 60) 
+            {
+                minutes=0;
+                hours++;
+                if(hours == 24)
+                    hours=0;
+            }
+        }
+        #ifdef PRINT_TIME
+        ESP_LOGI(TAG_T_CLOCK, "ESP local time: %d:%d:%d", hours, minutes, seconds);
+        #endif
+
+        //check offset every certain minutes
+        #ifdef CHECK_TIME_OFFSET
+        if(!(internal_timer % (60*CLOCK_MIN_TO_CHECK)))
+        {
+            xSemaphoreGive(real_time_key); //get real time semaphore 
+            xSemaphoreGive(check_time_key); //check offset semaphore 
+        }
+
+        #endif
+    }
+    vSemaphoreDelete(real_time_key);
+    ESP_LOGW(TAG_T, "Clock task closed.");
+    vTaskDelete(NULL);
+}
+
+void tcp_real_time_task(void *pvParameters)
 {
     ESP_LOGI(TAG_T_CLOCK, "Starting tcp time server task...");
 
@@ -550,7 +510,7 @@ void connect_to_host_time(char *host_parameter, int port)
                                 "Connection: close\r\n"
                                 "\r\n");
 
-        //send hhtp like request
+        //send http like request
         send(sock2, time_api_message, strlen(time_api_message), 0);  
         ESP_LOGI(TAG_T_CLOCK, "Message send to %s (%d bytes)", host_parameter, strlen(time_api_message));
 
@@ -626,6 +586,35 @@ void connect_to_host_time(char *host_parameter, int port)
     close(sock2);
 }
 
+void check_time_offset_task(void *pvParameters)
+{
+    ESP_LOGI(TAG_T_CLOCK, "Starting time offset task...");
+    check_time_key = xSemaphoreCreateBinary();
+
+    while(1)
+    {
+        if(xSemaphoreTake(check_time_key, portMAX_DELAY))
+        {
+            ESP_LOGW(TAG_T_CLOCK, "Waiting to get real time...");
+            while(seconds_true>60)
+                vTaskDelay(pdMS_TO_TICKS(30));
+            if(hours_true<24)
+            {
+                int dif_h = hours - hours_true;
+                int dif_m = minutes - minutes_true;
+                int dif_s = seconds - seconds_true;
+                ESP_LOGW(TAG_T_CLOCK, "Offset by %d:%d:%d", dif_h,dif_m,dif_s);
+            }
+            else
+                ESP_LOGE(TAG_T_CLOCK, "Could not get real time to check offset.");
+            seconds_true = 0xffff;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    vSemaphoreDelete(check_time_key);
+}
+
+//check connection to google
 uint8_t check_internet_connection()
 {
     uint8_t connection_f = 0;
@@ -687,43 +676,63 @@ uint8_t check_internet_connection()
     return connection_f;
 }
 
-void handle_read_tcp(char command[][128], char *tx_buffer)
+//tcp exclusive button events
+void button_tcp_event_task(void *pvParameters) //evento de boton
+{
+    ESP_LOGI(TAG_T, "Starting button event task...");
+    while(1)
+    {
+       
+        LOCK_MUTEX(edge_mutex)
+            //if button pressed
+            if(edge)
+            {
+                ESP_LOGI(TAG_T, "ESP local time: %d:%d:%d", hours, minutes, seconds);
+                edge = 0;
+            }
+        UNLOCK_MUTEX(edge_mutex)
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
+//iot server functions
+void handle_read_tcp(char command[][128], char *tx_buffer, char second_flow_id_pck[128])
 {
     char nvs_value[STR_LEN/4] = "NULL", local_buffer[STR_LEN];
 
     if(strcmp(command[ELEMENT_T], "L") == 0)
     {
-        sprintf(local_buffer, "ACK:%d", l_state);
+        sprintf(local_buffer, "ACK:%s:%d", second_flow_id_pck, l_state);
         message_to_buffer(tx_buffer, local_buffer);
     }
     else if(strcmp(command[ELEMENT_T], "A") == 0)
     {
-        sprintf(local_buffer, "ACK:%d", adc_value);
+        sprintf(local_buffer, "ACK:%s:%d",second_flow_id_pck, adc_value);
         message_to_buffer(tx_buffer, local_buffer);
     }
     else if(strcmp(command[ELEMENT_T], "WIFI") == 0)
     {
         read_nvs(key_ssid, nvs_value, sizeof(nvs_value));
-        sprintf(local_buffer, "ACK:%s", nvs_value);
+        sprintf(local_buffer, "ACK:%s:%s",second_flow_id_pck, nvs_value);
         message_to_buffer(tx_buffer, local_buffer);
     }
     else if(strcmp(command[ELEMENT_T], "PASS") == 0)
     {
         read_nvs(key_pass, nvs_value, sizeof(nvs_value));
-        sprintf(local_buffer, "ACK:%s", nvs_value);
+        sprintf(local_buffer, "ACK:%s:%s", second_flow_id_pck, nvs_value);
         message_to_buffer(tx_buffer, local_buffer);
     }
     else if(strcmp(command[ELEMENT_T], "P") == 0)
     {
         uint32_t value_pwm = ledc_get_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-        sprintf(local_buffer, "ACK:%" PRIu32 "", value_pwm);
+        sprintf(local_buffer, "ACK:%s:%" PRIu32 "", second_flow_id_pck, value_pwm);
         message_to_buffer(tx_buffer, local_buffer);
     }
     else
         nack_message_tcp(tx_buffer);
 }
 
-void handle_write_tcp(char command[][128], char *tx_buffer)
+void handle_write_tcp(char command[][128], char *tx_buffer, char second_flow_id_pck[128])
 {
     char local_buffer[STR_LEN];
 
@@ -731,30 +740,18 @@ void handle_write_tcp(char command[][128], char *tx_buffer)
     {
         if(strcmp(command[VALUE_T], "1") == 0)
         {
-            sprintf(local_buffer, "ACK");
+            sprintf(local_buffer, "ACK:%s",second_flow_id_pck);
             message_to_buffer(tx_buffer, local_buffer);
             l_state = 1;
         }
         else if(strcmp(command[VALUE_T], "0") == 0)
         {
-            sprintf(local_buffer, "ACK");
+            sprintf(local_buffer, "ACK:%s",second_flow_id_pck);
             message_to_buffer(tx_buffer, local_buffer);
             l_state = 0;
         }
         else
             nack_message_tcp(tx_buffer);
-    }
-    else if(strcmp(command[ELEMENT_T], "WIFI") == 0)
-    {
-        write_nvs(key_ssid, command[VALUE_T]);
-        sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
-        message_to_buffer(tx_buffer, local_buffer);
-    }
-    else if(strcmp(command[ELEMENT_T], "PASS") == 0)
-    {
-        write_nvs(key_pass, command[VALUE_T]);
-        sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
-        message_to_buffer(tx_buffer, local_buffer);
     }
     else if(strcmp(command[ELEMENT_T], "P") == 0)
     {
@@ -764,7 +761,7 @@ void handle_write_tcp(char command[][128], char *tx_buffer)
                         LEDC_CHANNEL_0, 
                         (uint32_t)(0)); //0%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
+            sprintf(local_buffer, "ACK:%s:%s",second_flow_id_pck, command[VALUE_T]);
             message_to_buffer(tx_buffer, local_buffer);
         }
         else if(strcmp(command[VALUE_T], "25") == 0)
@@ -773,7 +770,7 @@ void handle_write_tcp(char command[][128], char *tx_buffer)
                         LEDC_CHANNEL_0, 
                         (uint32_t)(MAX_DUTY_RESOLUTION * 0.25)); //25%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
+            sprintf(local_buffer, "ACK:%s:%s",second_flow_id_pck, command[VALUE_T]);
             message_to_buffer(tx_buffer, local_buffer);
         }
         else if(strcmp(command[VALUE_T], "50") == 0)
@@ -782,7 +779,7 @@ void handle_write_tcp(char command[][128], char *tx_buffer)
                         LEDC_CHANNEL_0, 
                         (uint32_t)(MAX_DUTY_RESOLUTION * 0.5)); //50%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
+            sprintf(local_buffer, "ACK:%s:%s",second_flow_id_pck, command[VALUE_T]);
             message_to_buffer(tx_buffer, local_buffer);
         }
         else if(strcmp(command[VALUE_T], "100") == 0)
@@ -791,7 +788,7 @@ void handle_write_tcp(char command[][128], char *tx_buffer)
                         LEDC_CHANNEL_0, 
                         (uint32_t)(MAX_DUTY_RESOLUTION)); //100%
             ledc_update_duty(LEDC_HIGH_SPEED_MODE,LEDC_CHANNEL_0);
-            sprintf(local_buffer, "ACK:%s", command[VALUE_T]);
+            sprintf(local_buffer, "ACK:%s:%s",second_flow_id_pck, command[VALUE_T]);
             message_to_buffer(tx_buffer, local_buffer);
         }
         else
@@ -858,4 +855,12 @@ void build_command(char *string_com, ...)
         strcat(string_com, ":");
     }
     va_end(args);
+}
+
+void increment_id_packet()
+{
+    LOCK_MUTEX(id_pck_mutex)
+        id_pck++;
+        ESP_LOGI(TAG_T, "Creating packet number: %u", id_pck);
+    UNLOCK_MUTEX(id_pck_mutex)
 }

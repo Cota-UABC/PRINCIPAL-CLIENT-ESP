@@ -11,6 +11,7 @@
 #include "freertos/event_groups.h"
 #include "freertos/queue.h"
 
+#include "macros.h"
 #include "gpio.h"
 #include "adc.h"
 #include "wifi.h"
@@ -22,7 +23,9 @@
 #include "pwm.h"
 #include "mqtt.h"
 
-#define CONNECT_TO_SERVER
+//#define CONNECT_TO_TIME_SERVER
+#define CONNECT_TO_IOT_SERVER
+//#define AVTIVE_MQTT
 
 #define STR_LEN 128
 
@@ -31,8 +34,8 @@ const char *TAG_MAIN = "MAIN";
 TaskHandle_t get_button_handle = NULL;
 
 //nvs
-char ssid[STR_LEN] = "\0", pass[STR_LEN] = "\0", dev_name[STR_LEN] = "esp_default_name", user[STR_LEN] = "\0", dev_num[STR_LEN] = "\0";
-uint8_t valid_f = 0;
+char ssid[STR_LEN] = "\0", pass[STR_LEN] = "\0", dev_name[STR_LEN] = "esp_default_name", 
+    user[STR_LEN] = "\0", dev_num[STR_LEN] = "\0";
 
 typedef struct 
 {
@@ -54,23 +57,25 @@ void tcp_or_udp(uint8_t ip_flag);
 
 void app_main(void)
 {
-
     init_gpio();
     adc_init();
     ledc_init();
     ESP_ERROR_CHECK(init_nvs());
 
+    //mutexes
+    ip_mutex = xSemaphoreCreateMutex();
+    ap_mutex = xSemaphoreCreateMutex();
+
     //read button task
     xTaskCreate(get_button_task, "get_button_task", 4096, NULL, 4, NULL);
 
-    //validate flash values
-    valid_f = validate_read_nvs_values(ssid, pass, dev_name, user, dev_num);
+    //validate flash values and go to ap or station mode
+    ap_or_station_mode(validate_read_nvs_values(ssid, pass, dev_name, user, dev_num));
 
-    ap_or_station_mode(valid_f);
-    tcp_or_udp(ip_flag);
-
-    //button event task
-    xTaskCreate(button_event_task, "button_event_task", 4096, NULL, 4, NULL);
+    //make tcp client or udp server
+    LOCK_MUTEX(ip_mutex)
+        tcp_or_udp(ip_flag);
+    UNLOCK_MUTEX(ip_mutex)
 
     //gpio R/W task
     xTaskCreate(update_gpio_value_task, "update_gpio_value_task", 4096, NULL, 5, NULL);
@@ -79,13 +84,19 @@ void app_main(void)
     {
         vTaskDelay(pdMS_TO_TICKS(5000));
 
-        //if sudden disconnect and no ap active
-        if(!connected_w && !active_ap) 
-        {
-            ESP_LOGE(TAG_MAIN, "Wifi disconnected. Creating access point...");
-            activate_access_point();
-        }
+        LOCK_MUTEX(ip_mutex)
+        LOCK_MUTEX(ap_mutex)
+            //if sudden disconnect and no ap active
+            if(ip_flag==0xff && !active_ap) 
+            {
+                ESP_LOGE(TAG_MAIN, "Wifi disconnected. Creating access point...");
+                activate_access_point();
+            }
+        UNLOCK_MUTEX(ap_mutex)
+        UNLOCK_MUTEX(ip_mutex)
     }
+    vSemaphoreDelete(ip_mutex);
+    vSemaphoreDelete(ap_mutex);
 }
 
 int validate_read_nvs_values(char *ssid, char *pass, char *dev_name, char *user, char *dev_num)
@@ -108,8 +119,17 @@ int validate_read_nvs_values(char *ssid, char *pass, char *dev_name, char *user,
 void activate_access_point()
 {
     init_ap();
-    while(!active_ap)
+
+    uint8_t local_ap_flag=0;
+    while(1)
+    {
+        LOCK_MUTEX(ap_mutex)
+            local_ap_flag = active_ap;
+        UNLOCK_MUTEX(ap_mutex)
+        if(local_ap_flag != 0)
+            break;
         vTaskDelay(pdMS_TO_TICKS(30));
+    }
 }
 
 void ap_or_station_mode(uint8_t valid_f)
@@ -127,37 +147,50 @@ void ap_or_station_mode(uint8_t valid_f)
         
         ESP_LOGW(TAG_MAIN, "WIFI waiting....");
         
-        while(ip_flag == 0)
+        uint8_t local_ip_flag=0;
+        //wait for connect or disconect
+        while(1)
         {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            if(connected_w==0xff)
-            {
-                ESP_LOGE(TAG_MAIN, "Could not connect to wifi network. Creating access point...");
-                activate_access_point();
+            LOCK_MUTEX(ip_mutex)
+                local_ip_flag = ip_flag;
+            UNLOCK_MUTEX(ip_mutex)
+            if(local_ip_flag != 0)
                 break;
-            }
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        if(ip_flag==0xff)
+        {
+            ESP_LOGE(TAG_MAIN, "Could not connect to wifi network. Creating access point...");
+            activate_access_point();
         }
     }
 }
 
 void tcp_or_udp(uint8_t ip_flag)
 {
-     //if got IP
-    if(ip_flag)
+    //if got IP
+    if(ip_flag==1)
     {
-        //tcp clock task
-        xTaskCreate(clock_task, "clock_task", 4096, NULL, 5, NULL);
+        #ifdef CONNECT_TO_TIME_SERVER
+            //tcp clock task
+            xTaskCreate(clock_task, "clock_task", 4096, NULL, 5, NULL);
 
-        #ifdef CONNECT_TO_SERVER
+            //button tcp event task
+            xTaskCreate(button_tcp_event_task, "button_tcp_event_task", 4096, NULL, 4, NULL);
+        #endif
+
+        #ifdef CONNECT_TO_IOT_SERVER
             params.str1 = user;
             params.str2 = dev_num;
             params.str3 = "\0";
             
             //printf("param str: %s", params.str1);
-            xTaskCreate(tcp_server_task, "tcp_server_task", 8192, &params, 5, &tcp_server_handle);
+            xTaskCreate(tcp_server_task, "tcp_server_task", 16384, &params, 5, &tcp_server_handle);
         #endif
 
-        //mqtt_app_start();
+        #ifdef AVTIVE_MQTT
+            mqtt_app_start();
+        #endif
     }
     else
     {    

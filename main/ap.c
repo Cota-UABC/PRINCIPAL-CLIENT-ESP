@@ -13,13 +13,17 @@
 #include "host_name.h"
 #include "nvs_esp.h"
 #include "gpio.h"
+#include "freertos/semphr.h"
+#include "macros.h"
+
+SemaphoreHandle_t ap_mutex = 0;
 
 #define WIFI_SSID      "local_AP_ESP"
 #define WIFI_PASS      "12345678"
 #define MAX_STA_CONN    5
 
 static const char *TAG_AP = "softAP";
-uint8_t volatile active_ap = 0;
+uint8_t active_ap = 0;
 
 static void wifi_e_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
@@ -59,13 +63,17 @@ esp_err_t wifi_init_softap()
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI(TAG_AP, "Inicializacion de softAP terminada. SSID: %s password: %s", WIFI_SSID, WIFI_PASS);
-    active_ap++;
+    LOCK_MUTEX(ap_mutex)
+        active_ap++;
+    UNLOCK_MUTEX(ap_mutex)
     return ESP_OK;
 }
 
 void init_ap()
 {
-    active_ap = 0;
+    LOCK_MUTEX(ap_mutex)
+        active_ap = 0;
+    UNLOCK_MUTEX(ap_mutex)
 
     /*esp_err_t error = nvs_flash_init();
     if(error == ESP_ERR_NVS_NO_FREE_PAGES || error == ESP_ERR_NVS_NEW_VERSION_FOUND) 
